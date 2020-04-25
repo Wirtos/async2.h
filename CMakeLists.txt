@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.10)
+project(async2 C)
+set(CMAKE_C_STANDARD 99)
+add_executable(async2 examples/example.c async2/async2.c async2/vec.c)
+target_include_directories(async2 PRIVATE async2)
