@@ -28,32 +28,53 @@ vec_t(astate *) async_events_queue_; // singletone vector of async states
 
 void async_loop_run_forever_(void) {
     while (async_events_queue_.length > 0) {
-        int i;
-        astate *state, *parent;
-        vec_foreach(&async_events_queue_, state, i) {
-                if (async_done(state) || state->f(state, state->args, state->locals)) {
-                    free(state);
-                    vec_splice(&async_events_queue_, i, 1);
-                } else {
-                    while ((parent = state, state = state->next)) {
-                        if ((async_done(state) || state->f(state, state->args, state->locals))) {
-                            parent->next = NULL;
-                            free(state);
-                            break;
-                        }
-                    }
-                }
+        astate *state;
+        for (size_t i = 0; i < async_events_queue_.length; i++) {
+            state = async_events_queue_.data[i];
+            if (async_done(state)) {
+                free(state);
+                vec_splice(&async_events_queue_, i, 1);
+                i--;
+            } else {
+//                puts(state->args);
+                state->f(state, state->args, state->locals);
             }
+        }
     }
 }
 
+void async_loop_run_until_complete_(struct astate *main) {
+    async_loop_add_task_(main);
+    while (!async_done(main)) {
+        astate *state;
+        for (size_t i = 0; i < async_events_queue_.length; i++) {
+            state = async_events_queue_.data[i];
+            if (async_done(state)) {
+                free(state);
+                vec_splice(&async_events_queue_, i, 1);
+                i--;
+            } else {
+                state->f(state, state->args, state->locals);
+            }
+        }
+    }
+}
 
 void async_loop_destroy_(void) {
+    int i;
+    astate *state;
+    vec_foreach(&async_events_queue_, state, i) {
+            free(state);
+        }
     vec_deinit(&async_events_queue_);
 }
 
+struct astate *async_loop_add_task_(struct astate *state) {
+    vec_push(&async_events_queue_, state);
+    return state;
+}
 
-struct astate *async_create_task_(async_callback child_f, void *args, size_t stack_size) {
+struct astate *async_new_task_(async_callback child_f, void *args, size_t stack_size) {
     struct astate *state = malloc(sizeof(*state) + stack_size);
     async_init(state);
     state->locals = state + 1;
@@ -63,64 +84,66 @@ struct astate *async_create_task_(async_callback child_f, void *args, size_t sta
     return state;
 }
 
-struct astate *async_create_main_task_(async_callback main_f, void *args, size_t stack_size) {
-    struct astate *state;
-    state = async_create_task_(main_f, args, stack_size);
-    vec_push(&async_events_queue_, state);
-    return state;
-}
-
 void async_loop_init_(void) {
     vec_init(&async_events_queue_);
 }
 
+typedef struct {
+    struct astate **arr;
+    size_t size;
+} gathered_stack;
+
+
 async async_gathered(struct astate *state, void *args, void *locals) {
-    struct astate **arr = args, **begin = arr;
-    struct astate *child;
+    gathered_stack *stack = locals;
+    (void) args;
     async_begin(state);
+            for (size_t i = 0; i < stack->size; i++) {
+                async_loop_add_task_(stack->arr[i]);
+            }
             while (true) {
                 bool done = true;
-                while (*arr) {
-                    child = *arr;
-                    if (!async_done(child) && !child->f(child, child->args, child->locals)) {
+                for (size_t i = 0; i < stack->size; i++) {
+                    if (!async_done(stack->arr[i])) {
                         done = false;
                     }
-                    arr++;
                 }
                 if (done) {
-                    break;
+                    async_exit;
                 } else {
                     async_yield;
                 }
             }
-            arr = begin;
-            while (*arr) { free(*arr++); }
-            free(begin);
     async_end;
 }
 
 
 struct astate *async_vgather_(size_t n, ...) {
     va_list v_args;
-    struct astate **arr;
+    gathered_stack *stack;
+    struct astate *state;
 
-    arr = malloc(sizeof(*arr) * (n + 1));
-    arr[n] = NULL;
+    state = async_new_task_(async_gathered, NULL, sizeof(gathered_stack) + sizeof(struct astate *) * n);
+    stack = state->locals;
+    stack->size = n;
+    stack->arr = (struct astate **) (stack + 1);
+
     va_start(v_args, n);
     for (size_t i = 0; i < n; i++) {
-        arr[i] = va_arg(v_args, struct astate *);
+        struct astate *s = va_arg(v_args, struct astate *);
+        stack->arr[i] = s;
     }
     va_end(v_args);
-    return async_create_task_(async_gathered, arr, 1);
+    return state;
 }
 
-struct astate *async_gather_(size_t n, struct astate *const *arr_) {
-    struct astate **arr;
 
-    arr = malloc(sizeof(*arr) * (n + 1));
-    arr[n] = NULL;
-    for (size_t i = 0; i < n; i++) {
-        arr[i] = arr_[i];
-    }
-    return async_create_task_(async_gathered, arr, 1);
+struct astate *async_gather_(size_t n, struct astate **arr_) {
+    struct astate *state;
+    gathered_stack *stack;
+    state = async_new_task_(async_gathered, NULL, sizeof(gathered_stack));
+    stack = state->locals;
+    stack->size = n;
+    stack->arr = arr_;
+    return state;
 }

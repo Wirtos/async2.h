@@ -57,11 +57,10 @@ async f1(struct astate *state, char *args, struct f1_stack *locals) {
 
 int main() {
     async_loop_init();
-    async_create_task(f1, "first", struct f1_stack);
-    async_create_task(f2, NULL, ASYNC_NOLOCALS);
-    async_create_task(f1, "second", struct f1_stack);
+    async_create_task(async_new(f1, "first", struct f1_stack));
+    async_create_task(async_new(f2, NULL, ASYNC_NOLOCALS));
+    async_create_task(async_new(f1, "second", struct f1_stack));
     async_loop_run_forever();
-
     async_loop_destroy();
     return 0;
 }

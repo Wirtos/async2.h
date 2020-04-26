@@ -63,7 +63,11 @@ typedef enum ASYNC_EVT {
  */
 #define async_state unsigned _async_k
 
+/*
+ * Core async type to imply empty locals when creating new_async
+ */
 #define ASYNC_NOLOCALS ""
+
 /*
  * Core async structure, backwards compatibility with first async.h.
  */
@@ -86,8 +90,6 @@ struct astate {
     void *args;
     astate *next;
 };
-
-
 
 
 /*
@@ -147,36 +149,35 @@ struct astate {
 
 #define async_loop_run_forever() async_loop_run_forever_()
 
-#define async_loop_run(main) async_loop_run_(main)
+#define async_loop_run_until_complete(main) async_loop_run_until_complete_(main)
 
 #define async_loop_destroy() async_loop_destroy_()
 
 #define async_loop_init() async_loop_init_()
 
+#define async_new(func, args, locals) async_new_task_((async_callback)func, args, sizeof(locals))
 
-#define async_create_task(func, args, locals) async_create_main_task_((async_callback)func, args, sizeof(locals))
-
-struct astate *async_vgather_(size_t n, ...);
-
-struct astate *async_gather_(size_t n, struct astate *const *);
-
-
-#define async_new(func, args, locals) async_create_task_((async_callback)func, args, sizeof(locals))
+#define async_create_task(coro) async_loop_add_task_(coro)
 
 #define async_gather(n, arr_states) async_gather_(n, arr_states)
 
 #define async_vgather(n, ...) async_vgather_(n, __VA_ARGS__)
 
 #define fawait(coro)                                                      \
-    _async_p->next = coro;    \
+    _async_p->next = async_create_task(coro);    \
     *_async_k = __LINE__; case __LINE__:                                                \
-    if (_async_p->next != NULL && !async_done(_async_p->next)) return ASYNC_CONT
+    if (!async_done(_async_p->next)) return ASYNC_CONT
+
+
+struct astate *async_vgather_(size_t n, ...);
+
+struct astate *async_gather_(size_t n, struct astate **arr_);
+
+struct astate *async_new_task_(async_callback child_f, void *args, size_t stack_size);
+
+struct astate *async_loop_add_task_(struct astate *state);
 
 void async_loop_init_(void);
-
-struct astate *async_create_task_(async_callback child_f, void *args, size_t stack_size);
-
-struct astate *async_create_main_task_(async_callback main_f, void *args, size_t stackSize);
 
 void async_loop_run_forever_(void);
 
