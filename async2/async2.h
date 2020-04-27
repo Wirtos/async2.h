@@ -1,6 +1,3 @@
-#ifndef ASYNC2_H
-#define ASYNC2_H
-
 /*
 Copyright (c) 2020 Wirtos
 
@@ -23,6 +20,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
  */
 
+#ifndef ASYNC2_H
+#define ASYNC2_H
 /*
  * = Stackfull Async Subroutines =
  *
@@ -37,7 +36,7 @@ SOFTWARE.
  * 2. Because of the more flexible state handling, async subroutines can be nested
  *    in tree-like fashion which permits fork/join concurrency patterns.
  * 3. Every function can use persistent stack across subroutine call handled by event loop.
- * 4. Event loop with root tasks running subroutines.
+ * 4. Event loop with tasks running coros.
  * Caveats:
  *
  * 1. Due to compile-time bug, MSVC requires changing:
@@ -152,25 +151,52 @@ struct astate {
 #define async_done(state) ((state)->_async_k==ASYNC_DONE)
 
 
+/*
+ * Run until there's no tasks left
+ */
 #define async_loop_run_forever() async_loop_run_forever_()
 
-#define async_loop_run_until_complete(main) async_loop_run_until_complete_(main)
+/*
+ * Run until main coro succeeds
+ */
+#define async_loop_run_until_complete(main_coro) async_loop_run_until_complete_(main_coro)
 
+/*
+ * Destroy event loop and clear all memory, loop can be inited again
+ */
 #define async_loop_destroy() async_loop_destroy_()
 
+/*
+ * Init event loop
+ */
 #define async_loop_init() async_loop_init_()
 
+/*
+ * Create a new coro
+ */
 #define async_new(func, args, locals) async_new_task_((async_callback)func, args, sizeof(locals))
 
+/*
+ * Create task from coro
+ */
 #define async_create_task(coro) async_loop_add_task_(coro)
 
+/*
+ * Run few tasks in parallel, returns coro
+ */
 #define async_gather(n, arr_states) async_gather_(n, arr_states)
 
+/*
+ * Run few variadic tasks in parallel, returns coro
+ */
 #define async_vgather(n, ...) async_vgather_(n, __VA_ARGS__)
 
-#define fawait(coro)                                                      \
-    _async_p->next = async_create_task(coro);    \
-    *_async_k = __LINE__; case __LINE__:                                                \
+/*
+ * Create task and wait until the coro succeeds
+ */
+#define fawait(coro)                                        \
+    _async_p->next = async_create_task(coro);               \
+    *_async_k = __LINE__; case __LINE__:                    \
     if (!async_done(_async_p->next)) return ASYNC_CONT
 
 

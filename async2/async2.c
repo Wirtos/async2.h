@@ -36,7 +36,6 @@ void async_loop_run_forever_(void) {
                 vec_splice(&async_events_queue_, i, 1);
                 i--;
             } else {
-//                puts(state->args);
                 state->f(state, state->args, state->locals);
             }
         }
@@ -99,7 +98,7 @@ static async async_gathered(struct astate *state, void *args, void *locals) {
     (void) args;
     async_begin(state);
             for (size_t i = 0; i < stack->n_coros; i++) {
-                async_loop_add_task_(stack->arr_coros[i]);
+                async_loop_add_task_(stack->arr_coros[i]); /* Add coros to the event loop */
             }
             while (true) {
                 bool done = true;
@@ -127,8 +126,7 @@ struct astate *async_vgather_(size_t n, ...) {
     va_list v_args;
     gathered_stack *stack;
     struct astate *state;
-
-    state = async_new_task_(async_gathered, NULL, sizeof(gathered_stack) + sizeof(struct astate *) * n);
+    state = async_new_task_(async_gathered, NULL, sizeof(*stack) + sizeof(state) * n);
     stack = state->locals;
     stack->n_coros = n;
     stack->arr_coros = (struct astate **) (stack + 1);
@@ -146,7 +144,7 @@ struct astate *async_vgather_(size_t n, ...) {
 struct astate *async_gather_(size_t n, struct astate **arr_) {
     struct astate *state;
     gathered_stack *stack;
-    state = async_new_task_(async_gathered, NULL, sizeof(gathered_stack));
+    state = async_new_task_(async_gathered, NULL, sizeof(*stack));
     stack = state->locals;
     stack->n_coros = n;
     stack->arr_coros = arr_;
