@@ -24,7 +24,7 @@ SOFTWARE.
 #include <stdarg.h>
 #include <stdbool.h>
 
-vec_t(astate *) async_events_queue_; // singletone vector of async states
+static vec_t(astate *) async_events_queue_; // singletone vector of async states
 
 void async_loop_run_forever_(void) {
     while (async_events_queue_.length > 0) {
@@ -89,23 +89,28 @@ void async_loop_init_(void) {
 }
 
 typedef struct {
-    struct astate **arr;
-    size_t size;
+    struct astate **arr_coros;
+    size_t n_coros;
 } gathered_stack;
 
 
-async async_gathered(struct astate *state, void *args, void *locals) {
+static async async_gathered(struct astate *state, void *args, void *locals) {
     gathered_stack *stack = locals;
     (void) args;
     async_begin(state);
-            for (size_t i = 0; i < stack->size; i++) {
-                async_loop_add_task_(stack->arr[i]);
+            for (size_t i = 0; i < stack->n_coros; i++) {
+                async_loop_add_task_(stack->arr_coros[i]);
             }
             while (true) {
                 bool done = true;
-                for (size_t i = 0; i < stack->size; i++) {
-                    if (!async_done(stack->arr[i])) {
+                for (size_t i = 0; i < stack->n_coros; i++) {
+                    if (!async_done(stack->arr_coros[i])) {
                         done = false;
+                    } else { /* Remove coroutine from list of tracked coros */
+                        stack->n_coros--;
+                        for (size_t x = i; x < stack->n_coros; x++) {
+                            stack->arr_coros[x] = stack->arr_coros[x + 1];
+                        }
                     }
                 }
                 if (done) {
@@ -125,13 +130,13 @@ struct astate *async_vgather_(size_t n, ...) {
 
     state = async_new_task_(async_gathered, NULL, sizeof(gathered_stack) + sizeof(struct astate *) * n);
     stack = state->locals;
-    stack->size = n;
-    stack->arr = (struct astate **) (stack + 1);
+    stack->n_coros = n;
+    stack->arr_coros = (struct astate **) (stack + 1);
 
     va_start(v_args, n);
     for (size_t i = 0; i < n; i++) {
         struct astate *s = va_arg(v_args, struct astate *);
-        stack->arr[i] = s;
+        stack->arr_coros[i] = s;
     }
     va_end(v_args);
     return state;
@@ -143,7 +148,7 @@ struct astate *async_gather_(size_t n, struct astate **arr_) {
     gathered_stack *stack;
     state = async_new_task_(async_gathered, NULL, sizeof(gathered_stack));
     stack = state->locals;
-    stack->size = n;
-    stack->arr = arr_;
+    stack->n_coros = n;
+    stack->arr_coros = arr_;
     return state;
 }

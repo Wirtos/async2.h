@@ -142,6 +142,11 @@ struct astate {
 #define async_init(state) (state)->_async_k=ASYNC_INIT
 
 /*
+ * Cancels running coroutine
+ */
+#define async_cancel(coro) coro->_async_k = ASYNC_DONE
+
+/*
  * Check if async subroutine is done
  */
 #define async_done(state) ((state)->_async_k==ASYNC_DONE)
