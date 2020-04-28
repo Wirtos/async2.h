@@ -9,7 +9,7 @@ this is an async/await/fawait/event loop implementation for C based on Duff's de
 2. It uses 40 bytes of memory per state, but grants you greater nesting abilities and stack management.
 3. It's not dependent on an OS.
 4. It's a bit simpler to understand than or any other implementation as async state/stack management is fully handled by the lib.
-5. You can't preserve local variables across function calls, but lib provides a way to store them persistently(see )
+5. You can't preserve local variables across function calls, but lib provides a way to store them persistently(see async_new function)
 
 # API
 
@@ -38,7 +38,7 @@ Function|Description
 *async_exit*|Terminate the current async subroutine
 *async_done(state)*|Returns true if async subroutine has completed execution, otherwise false
 
-#Practices 
+# Practices 
 - How can I return value/values from the function?
 ---
 Pass pointer to value as args when creating new coroutine with async_new. Then assign to pointer inside function body:
@@ -61,8 +61,8 @@ We can replace int * with, say, struct * if we want multiple return values of di
 Just create a struct with all needed variables and then pass struct as a type when creating new coro. See examples/example.c and short example below.
 
 
-#Examples
-##A simple example to run two coroutines in parallel
+# Examples
+## A simple example to run two coroutines in parallel
 ```C
 #include <stdio.h>
 #include "async2.h"
