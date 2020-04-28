@@ -8,12 +8,12 @@ this is an async/await/fawait/event loop implementation for C based on Duff's de
 1. It's 100% pure, portable C.
 2. It uses 40 bytes of memory per state, but grants you greater nesting abilities and stack management.
 3. It's not dependent on an OS.
-4. It's a bit simpler to understand than or any other implementation as async state/stack management is fully handled by the lib.
+4. It's a bit simpler to understand than other implementations as async state/stack management is fully handled by the lib.
 5. You can't preserve local variables across function calls, but lib provides a way to store them persistently(see async_new function)
 
 # API
 
-Types|Meaning
+Types|Description
 -----|-------
 __async (\*async_callback)(struct astate \*, void \*, void \*)__| pointer to function with signature: `async funcname(struct astate *state, void *args, void *locals)`
 __ASYNC\_NOLOCALS__|Type to imply empty function stack(locals) when creating new coro with `async_new`.
