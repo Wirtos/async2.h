@@ -26,37 +26,30 @@ SOFTWARE.
 
 static vec_t(astate *) async_events_queue_; // singletone vector of async states
 
+#define async_loop_body \
+    astate *state; \
+    for (size_t i = 0; i < async_events_queue_.length; i++) {   \
+        state = async_events_queue_.data[i];                    \
+        if (async_done(state)) {                                \
+            free(state);                                        \
+            vec_splice(&async_events_queue_, i, 1);             \
+            i--;                                                \
+        } else {                                                \
+            state->f(state, state->args, state->locals);        \
+        }                                                       \
+    }
+
 void async_loop_run_forever_(void) {
     while (async_events_queue_.length > 0) {
-        astate *state;
-        for (size_t i = 0; i < async_events_queue_.length; i++) {
-            state = async_events_queue_.data[i];
-            if (async_done(state)) {
-                free(state);
-                vec_splice(&async_events_queue_, i, 1);
-                i--;
-            } else {
-                state->f(state, state->args, state->locals);
-            }
-        }
+        async_loop_body
     }
 }
 
 void async_loop_run_until_complete_(struct astate *main) {
-    async_loop_add_task_(main);
-    while (!async_done(main)) {
-        astate *state;
-        for (size_t i = 0; i < async_events_queue_.length; i++) {
-            state = async_events_queue_.data[i];
-            if (async_done(state)) {
-                free(state);
-                vec_splice(&async_events_queue_, i, 1);
-                i--;
-            } else {
-                state->f(state, state->args, state->locals);
-            }
-        }
+    while (!main->f(main, main->args, main->locals)) {
+        async_loop_body
     }
+    free(main);
 }
 
 void async_loop_destroy_(void) {

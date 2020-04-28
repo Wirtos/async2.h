@@ -63,16 +63,9 @@ typedef enum ASYNC_EVT {
 #define async_state unsigned _async_k
 
 /*
- * Core async type to imply empty locals when creating new_async
+ * Core async type to imply empty locals when creating new coro
  */
-#define ASYNC_NOLOCALS ""
-
-/*
- * Core async structure, backwards compatibility with first async.h.
- */
-struct async {
-    async_state;
-};
+typedef char ASYNC_NOLOCALS;
 
 typedef struct astate astate;
 
@@ -189,7 +182,7 @@ struct astate {
 /*
  * Run few variadic tasks in parallel, returns coro
  */
-#define async_vgather(n, ...) async_vgather_(n, __VA_ARGS__)
+#define async_vgather async_vgather_
 
 /*
  * Create task and wait until the coro succeeds
