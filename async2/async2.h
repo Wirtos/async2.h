@@ -49,18 +49,21 @@ SOFTWARE.
  */
 
 #include <stddef.h>
+#include <time.h>
 
 /*
  * The async computation status
  */
 typedef enum ASYNC_EVT {
-    ASYNC_INIT = 0, ASYNC_CONT = ASYNC_INIT, ASYNC_DONE = 1
+    ASYNC_INIT = 0, ASYNC_CONT = 1, ASYNC_DONE = 2
 } async;
 
-/*
- * Declare the async state
- */
-#define async_state unsigned _async_k
+typedef enum ASYNC_ERR {
+    ASYNC_OK = 0,
+    ASYNC_ERR_CANCELLED = 42,
+    ASYNC_ERR_NOMEM = 12
+} async_error;
+
 
 /*
  * Core async type to imply empty locals when creating new coro
@@ -75,38 +78,68 @@ typedef struct astate astate;
  */
 typedef async (*async_callback)(struct astate *, void *, void *);
 
+typedef void (*cancel_callback)(struct astate *, void *, void *);
+
+
 struct astate {
-    async_state;
-    async_callback f;
-    void *locals;
-    void *args;
-    astate *next;
+    int must_cancel;
+    int is_scheduled;
+    async_error err;
+
+    long int _async_k;
+    async_callback _func;
+    cancel_callback _cancel;
+    void *_args;
+    void *_locals;
+    void **_allocs;
+    size_t _allocs_capacity;
+    size_t _n_allocs;
+    size_t _ref_cnt;
+    astate *_next;
 };
+
+#define async_INCREF(coro) coro->_ref_cnt++
+
+#define async_DECREF(coro) coro->_ref_cnt--
 
 
 /*
  * Mark the start of an async subroutine
  *
  * Unknown continuation values now restart the subroutine from the beginning.
+ *
+ * ASYNC_DEBUG mode is c99+ only.
  */
+#ifdef ASYNC_DEBUG
+#define async_begin(k)                          \
+    struct astate *_async_p = k;                \
+    fprintf(stderr, "Entered %s", __func__);    \
+    switch(_async_p->_async_k) { default:
+#else
 #define async_begin(k)                      \
     struct astate *_async_p = k;            \
-    unsigned *_async_k = &(k)->_async_k;    \
-    switch(*_async_k) { default:
-
+    switch(_async_p->_async_k) { default:
+#endif
 
 /*
  * Mark the end of a async subroutine
  */
-#define async_end            \
-    *_async_k=ASYNC_DONE;    \
-    case ASYNC_DONE:         \
-    return ASYNC_DONE; }
-
-/*
- * Wait until the condition succeeds
- */
-#define await(cond) await_while(!(cond))
+#ifdef ASYNC_DEBUG
+#define async_end                           \
+    _async_p->_async_k=ASYNC_DONE;          \
+    async_DECREF(_async_p);                 \
+    fprintf(stderr, "Exited %s", __func__); \
+    /* fall through */                      \
+    case ASYNC_DONE:                        \
+    return ASYNC_DONE; } (void)0
+#else
+#define async_end                           \
+    _async_p->_async_k=ASYNC_DONE;          \
+    async_DECREF(_async_p);                 \
+    /* fall through */                      \
+    case ASYNC_DONE:                        \
+    return ASYNC_DONE; } (void)0
+#endif
 
 /*
  * Wait while the condition succeeds (optional)
@@ -114,34 +147,39 @@ struct astate {
  * Continuation state is now callee-saved like protothreads which avoids
  * duplicate writes from the caller-saved design.
  */
-#define await_while(cond)                   \
-    *_async_k = __LINE__; case __LINE__:    \
+#define await_while(cond)                                             \
+    _async_p->_async_k = __LINE__; /* fall through */  case __LINE__: \
     if (cond) return ASYNC_CONT
+
+/*
+ * Wait until the condition succeeds
+ */
+#define await(cond) await_while(!(cond))
 
 /*
  * Yield execution
  */
-#define async_yield *_async_k = __LINE__; return ASYNC_CONT; case __LINE__:
+#define async_yield _async_p->_async_k = __LINE__; return ASYNC_CONT; /* fall through */ case __LINE__: (void)0
 
 /*
  * Exit the current async subroutine
  */
-#define async_exit *_async_k = ASYNC_DONE; return ASYNC_DONE
-
-/*
- * Initialize a new async computation
- */
-#define async_init(state) (state)->_async_k=ASYNC_INIT
+#define async_exit _async_p->_async_k = ASYNC_DONE; async_DECREF(_async_p); return ASYNC_DONE
 
 /*
  * Cancels running coroutine
  */
-#define async_cancel(coro) coro->_async_k = ASYNC_DONE
+#define async_cancel(coro) coro->must_cancel=1
+
+/*
+ * returns 1 if function was cancelled
+ */
+#define async_cancelled(coro) (coro->must_cancel == 1)
 
 /*
  * Check if async subroutine is done
  */
-#define async_done(state) ((state)->_async_k==ASYNC_DONE)
+#define async_done(coro) ((coro)->_async_k==ASYNC_DONE)
 
 
 /*
@@ -167,7 +205,7 @@ struct astate {
 /*
  * Create a new coro
  */
-#define async_new(func, args, locals) async_new_task_((async_callback)func, args, sizeof(locals))
+#define async_new(call_func, args, locals) async_new_coro_(call_func, args, sizeof(locals))
 
 /*
  * Create task from coro
@@ -175,29 +213,69 @@ struct astate {
 #define async_create_task(coro) async_loop_add_task_(coro)
 
 /*
- * Run few tasks in parallel, returns coro
+ * Get async_error code for current execution state. Can be used to check for errors after fawait()
  */
-#define async_gather(n, arr_states) async_gather_(n, arr_states)
+#define async_errno (_async_p->err)
+
+/*
+ * Create task and wait until the coro succeeds. Resets async_errno and sets it.
+ */
+#define fawait(coro)                                                                                                \
+    _async_p->_next = async_create_task(coro);                                                                      \
+    if(_async_p->_next != NULL){                                                                                    \
+        _async_p->err = ASYNC_OK;                                                                                   \
+        async_INCREF(_async_p->_next);                                                                              \
+        _async_p->_async_k = __LINE__; /* fall through */ case __LINE__:                                            \
+        if (!async_done(_async_p->_next)) return ASYNC_CONT;                                                        \
+        else {async_DECREF(_async_p->_next); _async_p->err = _async_p->_next->err; _async_p->_next = NULL;};        \
+    } else _async_p->err = ASYNC_ERR_NOMEM
+
+
+/*
+ * Allocate memory that'll be freed automatically after async function ends.
+ * Allows to avoid async_cancel callback.
+ */
+#define async_alloc(size) async_alloc_(_async_p, size)
+
+/*
+ * Set function to be executed on function cancellation once. This version can be used inside the async function.
+ * In this case cancel_func will be called only if async function has reached async_on_cancel statement
+ * before async_cancel() was called on current state.
+ */
+#define async_on_cancel(cancel_func) _async_p->_cancel=cancel_func
+
+/*
+ * Set function to be executed on function cancellation once. Can be used to free memory and finish some tasks.
+ */
+#define async_set_on_cancel(coro, cancel_func) coro->_cancel=cancel_func
 
 /*
  * Run few variadic tasks in parallel, returns coro
  */
-#define async_vgather async_vgather_
+struct astate *async_vgather(size_t n, ...);
 
 /*
- * Create task and wait until the coro succeeds
+ * Does the same, but takes array and number of array elements.
+ * Arr must not be freed before this coro is done or cancelled.
+ * arr will be modified inside the task, so pass a copy if you need original array to be unchanged.
  */
-#define fawait(coro)                                        \
-    _async_p->next = async_create_task(coro);               \
-    *_async_k = __LINE__; case __LINE__:                    \
-    if (!async_done(_async_p->next)) return ASYNC_CONT
+struct astate *async_gather(size_t n, struct astate **arr);
 
+/*
+ * Block for `delay` seconds
+ */
+struct astate *async_sleep(time_t delay);
 
-struct astate *async_vgather_(size_t n, ...);
+/*
+ * Execute function in `timeout` seconds or cancel it if timeout was reached.
+ */
+struct astate *async_wait_for(struct astate *state, time_t timeout);
 
-struct astate *async_gather_(size_t n, struct astate **arr_);
+/*
+ * Internal functions, use with caution! (At least read the code)
+ */
 
-struct astate *async_new_task_(async_callback child_f, void *args, size_t stack_size);
+struct astate *async_new_coro_(async_callback child_f, void *args, size_t stack_size);
 
 struct astate *async_loop_add_task_(struct astate *state);
 
@@ -208,5 +286,7 @@ void async_loop_run_forever_(void);
 void async_loop_run_until_complete_(struct astate *main);
 
 void async_loop_destroy_(void);
+
+void *async_alloc_(struct astate *state, size_t size);
 
 #endif
