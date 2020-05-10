@@ -1,15 +1,23 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <limits.h>
+#include <assert.h>
 #include "async2.h"
+
+struct f3_args {
+    int res1;
+    int res2;
+};
 
 struct f1_stack {
     int i;
-    int res;
+    struct f3_args res;
+    void *mem;
 };
 
 async f4(struct astate *state, void *args, void *locals) {
     async_begin(state);
+            (void) args;
+            (void) locals;
             puts("f4 call 1");
             async_yield;
             puts("f4 call 2");
@@ -17,33 +25,44 @@ async f4(struct astate *state, void *args, void *locals) {
 }
 
 
-async f3(struct astate *state, int *args, int *locals) {
-    int *i = locals;
-    int *res = args; /* Pointer assignment from locals or args is fine outside async_begin, but value assignment isn't. */
+async f3(struct astate *state, void *args, void *locals_) {
+    int *i = locals_;
+    struct f3_args *res = args; /* Pointer assignment from locals or args is fine outside async_begin, but value assignment isn't. */
     async_begin(state);
             for (*i = 0; *i < 3; (*i)++) {
                 printf("f3 %d\n", (*i) + 1);
                 async_yield;
             }
-            *res = rand() % INT_MAX;
+            res->res1 = rand() % RAND_MAX;
+            res->res2 = rand() % RAND_MAX;
     async_end;
 }
 
 async f2(struct astate *state, void *args, void *locals) {
     async_begin(state);
+            (void) locals;
+            (void) args;
             puts("f2 call");
     async_end;
 }
 
+async f1(struct astate *state, void *args, void *locals_) {
+    struct f1_stack *locals = locals_;
+    char *text = args;
 
-async f1(struct astate *state, char *args, struct f1_stack *locals) {
     async_begin(state);
             for (locals->i = 0; locals->i < 3; locals->i++) {
-                printf("f0 %s %d\n", args, (locals->i) + 1);
+                printf("f0 %s %d\n", text, (locals->i) + 1);
                 fawait(async_new(f3, &locals->res, int)); /* Create new coro from f3 and wait until it completes. */
-                printf("Result: %d\n", locals->res);
+                printf("Result: %d - %d\n", locals->res.res1, locals->res.res2);
             }
             fawait(async_vgather(2, async_new(f4, NULL, ASYNC_NOLOCALS), async_new(f4, NULL, ASYNC_NOLOCALS)));
+            assert(async_errno == ASYNC_OK);
+            fawait(async_sleep(1));
+            assert(async_errno == ASYNC_OK);
+            fawait(async_wait_for(async_sleep(1000000), 1));
+            assert(async_errno == ASYNC_ERR_CANCELLED);
+            locals->mem = async_alloc(512); /* This memory will be freed automatically after function end*/
     async_end;
 }
 
