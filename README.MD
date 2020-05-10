@@ -6,46 +6,61 @@ this is an async/await/fawait/event loop implementation for C based on Duff's de
 # Features
 
 1. It's 100% pure, portable C.
-2. It uses 40 bytes of memory per state, but grants you greater nesting abilities and stack management.
+2. It uses 96 bytes of memory per state, but grants you seamless nesting abilities, errors and stack management.
 3. It's not dependent on an OS.
 4. It's a bit simpler to understand than other implementations as async state/stack management is fully handled by the lib.
-5. You can't preserve local variables across function calls, but lib provides a way to store them persistently(see async_new function)
+5. You can't preserve local variables across function calls, but lib provides a way to store them persistently (see practices)
 
 # API
 
 Types|Description
 -----|-------
-__async (\*async_callback)(struct astate \*, void \*, void \*)__| pointer to function with signature: `async funcname(struct astate *state, void *args, void *locals)`
+__async_callback__| pointer to an async function with signature: `async funcname(struct astate *state, void *args, void *locals)`
+__cancel_callback__| pointer to a cancel function with signature: `void funcname(struct astate *state, void *args, void *locals)`
 __ASYNC\_NOLOCALS__|Type to imply empty function stack(locals) when creating new coro with `async_new`.
+__async_err__|Enum type with async errors
 
 Function|Description
 --------|-----------
 *async_loop_init()*|Init new event loop
-*async_loop_destroy()*|Destroy inited event loop
+*async_loop_destroy()*|Destroy inited event loop, cancel and destroy all the tasks inside
 *async_loop_run_forever()*|Block and run event loop until there's no uncompleted tasks
 *async_loop_run_until_complete(main_coro)*|Block and run event loop until main_coro completes. Can be called any number of times preserving uncompleted tasks state
 *async_begin(state)*|Mark the beginning of an async subroutine
 *async_end*|Mark the end of an async subroutine
+*fawait(coro)*|Add task to the event loop and block progress until coro is done executing. 
 *async_yield*|Yield execution until it's invoked again
 *await(cond)*|Block progress until `cond` is true
 *await_while(cond)*|Block progress while `cond` is true
 *async_new(func, args, locals)*|Returns a new coro from function(function must follow async_callback signature) with args and stack memory capable to hold type passed to locals: int, struct, array, custom type or ASYNC_NOLOCALS if you don't need stack memory at all
 *async_gather(n_coros, struct astate\*\* array_of_coros)*|Gathers together few coros to run them in parallel into single coro and returns it
 *async_vgather(n_coros, ...)*|Variadic version of async_gather, expects coros to be passed directly
-*fawait(coro)*|Add task to the event loop and block progress until coro is done executing
+*async_sleep(time_t delay)*|Block execution for `delay` seconds
+*async_wait_for(struct astate \* coro, time_t timeout)*| Wait for the coro to complete with a timeout. Cancel it otherwise.
 *async_create_task(coro)*|Add task to the event loop without blocking current progress
-*async_cancel(coro)*|UNSAFE. cancels current coro. Note, that if coro operates some custom memory inside it'll result in a memory leak.
+*async_cancel(coro)*| Cancels current coro. Note, that if coro operates some custom memory not allocated with async_alloc it'll result in a memory leak.
+*async_cancelled(coro)*|Returns true if coro was cancelled, false otherwise
+*async_on_cancel(cancel_func)*|Set cancel function to be called on cancel for current async functions. cancel_func must follow cancel_callback type signature
+*async_set_on_cancel(coro, cancel_func)*|Same as function above, but takes coro instead of using current function
 *async_exit*|Terminate the current async subroutine
 *async_done(state)*|Returns true if async subroutine has completed execution, otherwise false
+*async_errno*|Macro that expands to the value of the type `async_err` of the current async function
+## Ownership system
+### (handled automatically by fawait/wait_for/gather coros, manual use only)
+Function|Description
+--------|-----------
+*async_INCREF(coro)*|Mark coro as "currently in use", so it won't be deleted automatically. Must be followed by async_DECREF somewhere else in the async function/cancel function". 
+*async_DECREF(coro)*|Mark coro as "isn't used anymore". Note, that it won't be deleted immediately if other functions used INCREF on this coro too
 
 # Practices 
 - How can I return value/values from the function?
----
+
 Pass pointer to value as args when creating new coroutine with async_new. Then assign to pointer inside function body:
 ```C
-async f(state, int *args, void *locals){
+async f(state, void *args_, void *locals_){
     async_begin(state);
-    *args = 42;
+    int *res = args_;
+    *res = 42;
     ...
 }
 ...
@@ -71,7 +86,9 @@ struct amain_stack {
     int i;
 };
 
-async amain(struct astate *state, char *args, struct amain_stack *locals) {
+async amain(struct astate *state, void *args_, void *locals_) {
+    struct amain_stack *locals = locals_;
+    char *args = args_;
     async_begin(state);
             /* Note, that locals->i assignment to 0 is happening inside async_begin block. 
              * Don't assign them outside! */
@@ -91,14 +108,40 @@ int main(void) {
     async_loop_destroy();
 }
 ```
+## Always check async_errno after every fawait, that way you'll be sure that function executed correctly:
+```c
+fawait(async_func(10));
+if(async_errno == ASYNC_ERR_NOMEM){
+    /* Something went really wrong... */
+}
+```
+---
+```c
+struct astate *task = async_create_task(coro());
+if(task == NULL){
+    /* Memory problem! */
+    abort();
+}
+async_INCREF(task); /* Acquire ownership for task so it won't be immediately deleted after completion */
+/* Do stuff... */
+await(async_done(task));
+if(task->err != ASYNC_OK){
+    /* Handle task error */
+}
+
+async_DECREF(task);
+```
+## Don't create libraries with async_new usage!
+- Always wrap coroutines in such way as asyncio_sleep or asyncio_wait_for so their use are very simple(no need to use async_new on them as they prepare and wrap coroutine inside).
+- Use underlying dev methods as async_new_coro_ in order to overcome userland limitations in creating async functions
+- Always wrap all the used tasks with ownership, otherwise you risk to get invalid pointer access. Remember: one INCREF - one DECREF
+- Provide cancel functions for your friendly methods, so even cancelled function won't break ownership and coro will be properly deleted.
+- Use async_alloc to manage dynamic memory
 
 # Caveats
 
-1. Due to compile-time bug, MSVC requires changing:
-    `Project Properties > Configuration Properties > C/C++ > General > Debug Information Format`
-   From "Program Database for Edit And Continue" to "Program Database".
-2. As with protothreads, you have to be very careful with switch
+1. As with protothreads, you have to be very careful with switch
    statements and manually-created local variables(variables not stored in `locals`) within an async subroutine. Generally best to avoid them.
-3. As with protothreads, you can't make blocking system calls and preserve
+2. As with protothreads, you can't make blocking system calls and preserve
    the async semantics. These must be changed into non-blocking calls that
    test a condition.
