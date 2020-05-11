@@ -20,33 +20,77 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
  */
 #include "async2.h"
-#include "vec.h"
 #include <stdarg.h>
+#include <string.h>
+#include <stdlib.h>
 
-static vec_t(astate *) async_events_queue_; /* singletone vector of async states */
+
+#define async_arr_init(v)\
+    memset((v), 0, sizeof(*(v)))
+
+#define async_arr_destroy(v)    \
+  ( free((v)->data),            \
+    async_arr_init(v) )
+
+#define async_arr_push(arr, val)                        \
+  ( async_arr_expand_(async_arr_unpack_(arr)) ? -1 :    \
+    ((arr)->data[(arr)->length++] = (val), 0), 0 )
+
+#define async_arr_unpack_(arr)\
+  (char**)&(arr)->data, &(arr)->length, &(arr)->capacity, sizeof(*(arr)->data)
+
+#define async_arr_splice(v, start, count)                       \
+  ( async_arr_splice_(async_arr_unpack_(v), start, count),      \
+    (v)->length -= (count) )
+
+static int async_arr_expand_(char **data, const size_t *len, size_t *capacity, size_t memsz) {
+    void *mem;
+    size_t n = (*capacity == 0) ? 1 : *capacity << 1;
+    if (*len + 1 > *capacity) {
+        mem = realloc(*data, n * memsz);
+        if (mem == NULL) return -1;
+        *data = mem;
+        *capacity = n;
+    }
+    return 0;
+}
+
+static void async_arr_splice_(
+        char **data, const size_t *len, const size_t *capacity,
+        size_t memsz, size_t start, size_t count) {
+    (void) capacity;
+    memmove(*data + start * memsz,
+            *data + (start + count) * memsz,
+            (*len - start - count) * memsz);
+}
+
+
+static async_arr_(astate *) async_events_queue_; /* singleton array of async states */
 
 /* Free astate and its allocs completely */
-#define STATE_FREE(state, index_var)                                                \
-    free(state->_locals);                                                           \
-    for (index_var = 0; index_var < state->_n_allocs; index_var++) {                \
-        free(state->_allocs[index_var]);                                            \
-    }                                                                               \
-    free(state->_allocs);                                                           \
+#define STATE_FREE(state)                                                               \
+    free(state->_locals);                                                               \
+    for (aindex = 0; aindex < state->_allocs.length; aindex++) {                        \
+        free(state->_allocs.data[aindex]);                                              \
+    }                                                                                   \
+    async_arr_destroy(&state->_allocs);                                                 \
     free(state)
 
 
+#define ASYNC_LOOP_HEAD     \
+    size_t i;               \
+    size_t aindex;          \
+    astate *state
+
 #define ASYNC_LOOP_BODY                                                                 \
-    int i;                                                                              \
-    size_t aindex;                                                                      \
-    astate *state;                                                                      \
     for (i = 0; i < async_events_queue_.length; i++) {                                  \
         state = async_events_queue_.data[i];                                            \
-        if (state->_ref_cnt == 0) {                                                      \
+        if (state->_ref_cnt == 0) {                                                     \
             if (!async_done(state) && state->_cancel) {                                 \
                 state->_cancel(state, state->_args, state->_locals);                    \
             }                                                                           \
-        STATE_FREE(state, aindex);                                                      \
-        vec_splice(&async_events_queue_, i, 1);                                         \
+        STATE_FREE(state);                                                              \
+        async_arr_splice(&async_events_queue_, i, 1);                                   \
         i--;                                                                            \
         } else if (state->must_cancel) {                                                \
             if (state->err == ASYNC_ERR_CANCELLED) {                                    \
@@ -75,6 +119,7 @@ static vec_t(astate *) async_events_queue_; /* singletone vector of async states
 
 
 void async_loop_run_forever_(void) {
+    ASYNC_LOOP_HEAD;
     while (async_events_queue_.length > 0) {
         ASYNC_LOOP_BODY;
     }
@@ -82,25 +127,23 @@ void async_loop_run_forever_(void) {
 
 
 void async_loop_run_until_complete_(struct astate *main) {
-    size_t aindex;
+    ASYNC_LOOP_HEAD;
     while (main->_func(main, main->_args, main->_locals) != ASYNC_DONE) {
         ASYNC_LOOP_BODY;
     }
-    STATE_FREE(main, aindex);
+    STATE_FREE(main);
 }
 
 void async_loop_destroy_(void) {
-    int i;
-    size_t aindex;
-    struct astate *state;
+    ASYNC_LOOP_HEAD;
     for (i = 0; i < async_events_queue_.length; i++) {
         state = async_events_queue_.data[i];
         if (state->_cancel) {
             state->_cancel(state, state->_args, state->_locals);
         }
-        STATE_FREE(state, aindex);
+        STATE_FREE(state);
     }
-    vec_deinit(&async_events_queue_);
+    async_arr_destroy(&async_events_queue_);
 }
 
 struct astate *async_loop_add_task_(struct astate *state) {
@@ -110,7 +153,7 @@ struct astate *async_loop_add_task_(struct astate *state) {
     }
     if (!state->is_scheduled) {
         state->is_scheduled = 1;
-        res = vec_push(&async_events_queue_, state);
+        res = async_arr_push(&async_events_queue_, state);
         if (res == -1) {
             return NULL;
         }
@@ -135,7 +178,7 @@ struct astate *async_new_coro_(async_callback child_f, void *args, size_t stack_
     return state;
 }
 
-void async_loop_init_(void) { vec_init(&async_events_queue_); }
+void async_loop_init_(void) { async_arr_init(&async_events_queue_); }
 
 typedef struct {
     struct astate **arr_coros;
@@ -147,7 +190,6 @@ void async_gathered_cancel(struct astate *state, void *args, void *locals_) {
     size_t i;
     (void) state;
     (void) args;
-
     for (i = 0; i < locals->n_coros; i++) {
         async_DECREF(locals->arr_coros[i]);
         async_cancel(locals->arr_coros[i]);
@@ -282,7 +324,6 @@ static async async_waiter(struct astate *state, void *args, void *locals_) {
                 async_cancel(locals->child);
             }
             async_DECREF(locals->child);
-
     async_end;
 }
 
@@ -290,11 +331,11 @@ struct astate *async_wait_for(struct astate *state_, time_t timeout) {
     struct astate *state;
     waiter_stack *stack;
     state = async_new_coro_(async_waiter, NULL, sizeof(waiter_stack));
-    if (state == NULL) {
+    if (state == NULL || state_ == NULL) {
         return NULL;
     }
     async_set_on_cancel(state, async_waiter_cancel);
-    stack = state->_locals;
+    stack = state->_locals; /* Predefine locals. This trick can be used to create friendly methods. */
     stack->child = state_;
     stack->sec = timeout;
     async_INCREF(state_);
@@ -302,18 +343,15 @@ struct astate *async_wait_for(struct astate *state_, time_t timeout) {
 }
 
 void *async_alloc_(struct astate *state, size_t size) {
-    size_t n;
-    void *mem, **temp;
-    if (state->_allocs_capacity < state->_n_allocs + 1) {
-        n = (state->_allocs_capacity == 0) ? 1 : state->_allocs_capacity << 1;
-        temp = realloc(state->_allocs, sizeof(*state->_allocs) * n);
-        if (temp == NULL) { return NULL; }
-        state->_allocs_capacity = n;
-        state->_allocs = temp;
-    }
+    void *mem;
+    int res;
 
     mem = malloc(size);
     if (mem == NULL) { return NULL; }
-    state->_allocs[state->_n_allocs++] = mem;
+    res = async_arr_push(&state->_allocs, mem);
+    if (res == -1) {
+        free(mem);
+        return NULL;
+    }
     return mem;
 }

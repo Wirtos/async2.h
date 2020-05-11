@@ -80,6 +80,8 @@ typedef async (*async_callback)(struct astate *, void *, void *);
 
 typedef void (*cancel_callback)(struct astate *, void *, void *);
 
+#define async_arr_(T)\
+  struct { T *data; size_t length, capacity; }
 
 struct astate {
     int must_cancel;
@@ -91,9 +93,7 @@ struct astate {
     cancel_callback _cancel;
     void *_args;
     void *_locals;
-    void **_allocs;
-    size_t _allocs_capacity;
-    size_t _n_allocs;
+    async_arr_(void*) _allocs;
     size_t _ref_cnt;
     astate *_next;
 };
