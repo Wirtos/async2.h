@@ -76,9 +76,9 @@ typedef struct astate astate;
 /*
  * Core async type, every async function must follow this signature.
  */
-typedef async (*async_callback)(struct astate *, void *, void *);
+typedef async (*AsyncCallback)(struct astate *, void *, void *);
 
-typedef void (*cancel_callback)(struct astate *, void *, void *);
+typedef void (*AsyncCancelCallback)(struct astate *, void *, void *);
 
 #define async_arr_(T)\
   struct { T *data; size_t length, capacity; }
@@ -89,8 +89,8 @@ struct astate {
     async_error err;
 
     long int _async_k;
-    async_callback _func;
-    cancel_callback _cancel;
+    AsyncCallback _func;
+    AsyncCancelCallback _cancel;
     void *_args;
     void *_locals;
     async_arr_(void*) _allocs;
@@ -98,9 +98,9 @@ struct astate {
     astate *_next;
 };
 
-#define async_INCREF(coro) coro->_ref_cnt++
+#define async_INCREF(coro) if(coro) coro->_ref_cnt++
 
-#define async_DECREF(coro) coro->_ref_cnt--
+#define async_DECREF(coro) if(coro) coro->_ref_cnt--
 
 
 /*
@@ -250,7 +250,7 @@ struct astate {
 #define async_set_on_cancel(coro, cancel_func) coro->_cancel=cancel_func
 
 /*
- * Run few variadic tasks in parallel, returns coro
+ * Run few variadic tasks in parallel
  */
 struct astate *async_vgather(size_t n, ...);
 
@@ -259,7 +259,7 @@ struct astate *async_vgather(size_t n, ...);
  * Arr must not be freed before this coro is done or cancelled.
  * arr will be modified inside the task, so pass a copy if you need original array to be unchanged.
  */
-struct astate *async_gather(size_t n, struct astate **arr);
+struct astate *async_gather(size_t n, struct astate **states);
 
 /*
  * Block for `delay` seconds
@@ -275,9 +275,11 @@ struct astate *async_wait_for(struct astate *state, time_t timeout);
  * Internal functions, use with caution! (At least read the code)
  */
 
-struct astate *async_new_coro_(async_callback child_f, void *args, size_t stack_size);
+struct astate *async_new_coro_(AsyncCallback child_f, void *args, size_t stack_size);
 
 struct astate *async_loop_add_task_(struct astate *state);
+
+struct astate **async_loop_add_tasks_(size_t n, struct astate **states);
 
 void async_loop_init_(void);
 

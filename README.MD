@@ -15,10 +15,10 @@ this is an async/await/fawait/event loop implementation for C based on Duff's de
 
 Types|Description
 -----|-------
-__async_callback__| pointer to an async function with signature: `async funcname(struct astate *state, void *args, void *locals)`
-__cancel_callback__| pointer to a cancel function with signature: `void funcname(struct astate *state, void *args, void *locals)`
+__AsyncCallback__| pointer to an async function with signature: `async funcname(struct astate *state, void *args, void *locals)`
+__AsyncCancelCallback__| pointer to a cancel function with signature: `void funcname(struct astate *state, void *args, void *locals)`
 __ASYNC\_NOLOCALS__|Type to imply empty function stack(locals) when creating new coro with `async_new`.
-__async_err__|Enum type with async errors
+__async_error__|Enum type with async errors
 
 Function|Description
 --------|-----------
@@ -28,11 +28,11 @@ Function|Description
 *async_loop_run_until_complete(main_coro)*|Block and run event loop until main_coro completes. Can be called any number of times preserving uncompleted tasks state
 *async_begin(state)*|Mark the beginning of an async subroutine
 *async_end*|Mark the end of an async subroutine
-*fawait(coro)*|Add task to the event loop and block progress until coro is done executing. 
+*fawait(coro)*|Add task to the event loop and block progress until coro is done executing. Sets async_errno.
 *async_yield*|Yield execution until it's invoked again
 *await(cond)*|Block progress until `cond` is true
 *await_while(cond)*|Block progress while `cond` is true
-*async_new(func, args, locals)*|Returns a new coro from function(function must follow async_callback signature) with args and stack memory capable to hold type passed to locals: int, struct, array, custom type or ASYNC_NOLOCALS if you don't need stack memory at all
+*async_new(func, args, locals)*|Returns a new coro from function(function must follow AsyncCallback signature) with args and stack memory capable to hold type passed to locals: int, struct, array, custom type or ASYNC_NOLOCALS if you don't need stack memory at all
 *async_gather(n_coros, struct astate\*\* array_of_coros)*|Gathers together few coros to run them in parallel into single coro and returns it
 *async_vgather(n_coros, ...)*|Variadic version of async_gather, expects coros to be passed directly
 *async_sleep(time_t delay)*|Block execution for `delay` seconds
@@ -40,7 +40,7 @@ Function|Description
 *async_create_task(coro)*|Add task to the event loop without blocking current progress
 *async_cancel(coro)*| Cancels current coro. Note, that if coro operates some custom memory not allocated with async_alloc it'll result in a memory leak.
 *async_cancelled(coro)*|Returns true if coro was cancelled, false otherwise
-*async_on_cancel(cancel_func)*|Set cancel function to be called on cancel for current async functions. cancel_func must follow cancel_callback type signature
+*async_on_cancel(cancel_func)*|Set cancel function to be called on cancel for current async functions. cancel_func must follow AsyncCancelCallback type signature
 *async_set_on_cancel(coro, cancel_func)*|Same as function above, but takes coro instead of using current function
 *async_exit*|Terminate the current async subroutine
 *async_done(state)*|Returns true if async subroutine has completed execution, otherwise false
@@ -132,11 +132,11 @@ if(task->err != ASYNC_OK){
 async_DECREF(task);
 ```
 ## Don't create libraries with async_new usage!
-- Always wrap coroutines in such way as asyncio_sleep or asyncio_wait_for so their use are very simple(no need to use async_new on them as they prepare and wrap coroutine inside).
+- Always wrap coroutines in such way as asyncio_sleep or asyncio_wait_for so their use will be very simple(no need to use async_new on them as they prepare), such way you can provide custom async functions that can take any arguments, but return type still will be limited to astate \*.
 - Use underlying dev methods as async_new_coro_ in order to overcome userland limitations in creating async functions
 - Always wrap all the used tasks with ownership, otherwise you risk to get invalid pointer access. Remember: one INCREF - one DECREF
 - Provide cancel functions for your friendly methods, so even cancelled function won't break ownership and coro will be properly deleted.
-- Use async_alloc to manage dynamic memory
+- Use async_alloc(_) to manage dynamic memory
 
 # Caveats
 

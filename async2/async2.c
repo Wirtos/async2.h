@@ -25,34 +25,49 @@ SOFTWARE.
 #include <stdlib.h>
 
 
-#define async_arr_init(v)\
-    memset((v), 0, sizeof(*(v)))
+#define async_arr_init(arr) \
+    memset((arr), 0, sizeof(*(arr)))
 
-#define async_arr_destroy(v)    \
-  ( free((v)->data),            \
-    async_arr_init(v) )
+#define async_arr_destroy(v)        \
+    (                               \
+        free((v)->data),            \
+        async_arr_init(v)           \
+    )
 
-#define async_arr_push(arr, val)                        \
-  ( async_arr_expand_(async_arr_unpack_(arr)) ? -1 :    \
-    ((arr)->data[(arr)->length++] = (val), 0), 0 )
+#define async_arr_push(arr, val)                            \
+    (                                                       \
+        async_arr_expand_(async_arr_unpack_(arr), 1)        \
+            ? ((arr)->data[(arr)->length++] = (val), 1)     \
+            : 0                                             \
+    )
+
+#define async_arr_reserve(arr, n) ( async_arr_expand_(async_arr_unpack_(arr), n) )
 
 #define async_arr_unpack_(arr)\
   (char**)&(arr)->data, &(arr)->length, &(arr)->capacity, sizeof(*(arr)->data)
 
-#define async_arr_splice(v, start, count)                       \
-  ( async_arr_splice_(async_arr_unpack_(v), start, count),      \
-    (v)->length -= (count) )
+#define async_arr_splice(arr, start, count)                           \
+    (                                                                 \
+        async_arr_splice_(async_arr_unpack_(arr), start, count),      \
+        (arr)->length -= (count)                                      \
+    )
 
-static int async_arr_expand_(char **data, const size_t *len, size_t *capacity, size_t memsz) {
+static int async_arr_expand_(char **data, const size_t *len, size_t *capacity, size_t memsz, size_t n_memb) {
     void *mem;
-    size_t n = (*capacity == 0) ? 1 : *capacity << 1;
-    if (*len + 1 > *capacity) {
+    size_t n, needed;
+
+    needed = *len + n_memb;
+    if (needed > *capacity) {
+        n = (*capacity == 0) ? 1 : *capacity << 1;
+        while (needed > n) {
+            n >>= 1;
+        }
         mem = realloc(*data, n * memsz);
-        if (mem == NULL) return -1;
+        if (mem == NULL) return 0;
         *data = mem;
         *capacity = n;
     }
-    return 0;
+    return 1;
 }
 
 static void async_arr_splice_(
@@ -64,14 +79,18 @@ static void async_arr_splice_(
             (*len - start - count) * memsz);
 }
 
+static int async_all_(size_t n, struct astate **states) { /* Returns false if at least one state is NULL */
+    while (n--) { if (states[n] == NULL) { return 0; }}
+    return 1;
+}
 
 static async_arr_(astate *) async_events_queue_; /* singleton array of async states */
 
 /* Free astate and its allocs completely */
 #define STATE_FREE(state)                                                               \
     free(state->_locals);                                                               \
-    for (aindex = 0; aindex < state->_allocs.length; aindex++) {                        \
-        free(state->_allocs.data[aindex]);                                              \
+    while(state->_allocs.length--) {                                                    \
+        free(state->_allocs.data[state->_allocs.length]);                                \
     }                                                                                   \
     async_arr_destroy(&state->_allocs);                                                 \
     free(state)
@@ -147,25 +166,30 @@ void async_loop_destroy_(void) {
 }
 
 struct astate *async_loop_add_task_(struct astate *state) {
-    int res;
     if (state == NULL) {
         return NULL;
     }
     if (!state->is_scheduled) {
         state->is_scheduled = 1;
-        res = async_arr_push(&async_events_queue_, state);
-        if (res == -1) {
-            return NULL;
-        }
+        if (!async_arr_push(&async_events_queue_, state)) { return NULL; }
     }
     return state;
 }
 
-struct astate *async_new_coro_(async_callback child_f, void *args, size_t stack_size) {
-    struct astate *state = calloc(1, sizeof(*state));
-    if (state == NULL) {
-        return NULL;
+struct astate **async_loop_add_tasks_(size_t n, struct astate **states) {
+    size_t i;
+    if (states == NULL || !async_all_(n, states) || !async_arr_reserve(&async_events_queue_, n)) { return NULL; }
+    for (i = 0; i < n; i++) {
+        if (!states[i]->is_scheduled) {
+            async_arr_push(&async_events_queue_, states[i]);
+        }
     }
+    return states;
+}
+
+struct astate *async_new_coro_(AsyncCallback child_f, void *args, size_t stack_size) {
+    struct astate *state = calloc(1, sizeof(*state));
+    if (state == NULL) { return NULL; }
     state->_locals = calloc(1, stack_size);
     if (state->_locals == NULL) {
         free(state);
@@ -198,7 +222,7 @@ void async_gathered_cancel(struct astate *state, void *args, void *locals_) {
 
 static async async_gatherer(struct astate *state, void *args, void *locals_) {
     gathered_stack *locals = locals_;
-    size_t i, x;
+    size_t i;
     int done;
     async_begin(state);
             (void) args;
@@ -210,9 +234,8 @@ static async async_gatherer(struct astate *state, void *args, void *locals_) {
                     } else { /* Remove coroutine from list of tracked coros */
                         async_DECREF(locals->arr_coros[i]);
                         locals->n_coros--;
-                        for (x = i; x < locals->n_coros; x++) {
-                            locals->arr_coros[x] = locals->arr_coros[x + 1];
-                        }
+                        memmove(&locals->arr_coros[i], &locals->arr_coros[i + 1],
+                                sizeof(*locals->arr_coros) * (locals->n_coros - i));
                         i--;
                     }
                 }
@@ -231,44 +254,58 @@ struct astate *async_vgather(size_t n, ...) {
     struct astate *state;
     size_t i;
 
-    state = async_new_coro_(async_gatherer, NULL, sizeof(*stack) + sizeof(state) * n);
-    if (state == NULL) {
-        return NULL;
-    }
-    async_set_on_cancel(state, async_gathered_cancel);
+    state = async_new_coro_(async_gatherer, NULL, sizeof(*stack));
+    if (state == NULL) { return NULL; }
 
+    async_set_on_cancel(state, async_gathered_cancel);
     stack = state->_locals;
     stack->n_coros = n;
-    stack->arr_coros = (struct astate **) (stack + 1);
+    stack->arr_coros = async_alloc_(state, sizeof(state) * n);
+    if (stack->arr_coros == NULL) {
+        STATE_FREE(state);
+        return NULL;
+    }
 
     va_start(v_args, n);
     for (i = 0; i < n; i++) {
         stack->arr_coros[i] = va_arg(v_args, struct astate *);
-        async_INCREF(stack->arr_coros[i]);
-        async_loop_add_task_(stack->arr_coros[i]);
     }
+
+    if (!async_loop_add_tasks_(n, stack->arr_coros)) {
+        for (i = 0; i < n; i++) {
+            if (stack->arr_coros[i] != NULL) {
+                STATE_FREE(stack->arr_coros[i]);
+            }
+        }
+        STATE_FREE(state);
+    }
+    for (i = 0; i < n; i++) {
+        async_INCREF(stack->arr_coros[i]);
+    }
+
     va_end(v_args);
     return state;
 }
 
 
-struct astate *async_gather(size_t n, struct astate **arr_) {
+struct astate *async_gather(size_t n, struct astate **states) {
     struct astate *state;
     gathered_stack *stack;
     size_t i;
 
     state = async_new_coro_(async_gatherer, NULL, sizeof(*stack));
-    if (state == NULL) {
-        return NULL;
-    }
+    if (state == NULL) { return NULL; }
     async_set_on_cancel(state, async_gathered_cancel);
 
     stack = state->_locals;
     stack->n_coros = n;
-    stack->arr_coros = arr_;
+    stack->arr_coros = states;
+    if (!async_loop_add_tasks_(n, states)) {
+        STATE_FREE(state);
+        return NULL;
+    }
     for (i = 0; i < n; i++) {
         async_INCREF(stack->arr_coros[i]);
-        async_loop_add_task_(stack->arr_coros[i]);
     }
     return state;
 }
@@ -293,9 +330,7 @@ struct astate *async_sleep(time_t delay) {
     sleeper_stack *stack;
 
     state = async_new_coro_(async_sleeper, NULL, sizeof(*stack));
-    if (state == NULL) {
-        return NULL;
-    }
+    if (state == NULL) { return NULL; }
     stack = state->_locals;
     stack->sec = delay;
     return state;
@@ -303,40 +338,41 @@ struct astate *async_sleep(time_t delay) {
 
 typedef struct {
     time_t sec;
-    struct astate *child;
 } waiter_stack;
 
-static void async_waiter_cancel(struct astate *state, void *args, void *locals_) {
-    waiter_stack *locals = locals_;
-    (void) args;
+static void async_waiter_cancel(struct astate *state, void *args, void *locals) {
+    struct astate *child = args;
     (void) state;
-    async_DECREF(locals->child);
+    (void) locals;
+    async_DECREF(child);
 }
 
 static async async_waiter(struct astate *state, void *args, void *locals_) {
     waiter_stack *locals = locals_;
+    struct astate *child = args;
     async_begin(state);
             (void) args;
-            async_create_task(locals->child);
-            fawait(async_sleep(locals->sec));
-            if (!async_done(locals->child)) {
-                state->err = ASYNC_ERR_CANCELLED;
-                async_cancel(locals->child);
+            if (!async_create_task(child)) {
+                async_errno = ASYNC_ERR_NOMEM;
+                async_exit;
             }
-            async_DECREF(locals->child);
+            fawait(async_sleep(locals->sec));
+            if (!async_done(child)) {
+                async_errno = ASYNC_ERR_CANCELLED;
+                async_cancel(child);
+            }
+            async_DECREF(child);
     async_end;
 }
 
 struct astate *async_wait_for(struct astate *state_, time_t timeout) {
     struct astate *state;
     waiter_stack *stack;
-    state = async_new_coro_(async_waiter, NULL, sizeof(waiter_stack));
-    if (state == NULL || state_ == NULL) {
-        return NULL;
-    }
+    if (state_ == NULL) { return NULL; }
+    state = async_new_coro_(async_waiter, state_, sizeof(*stack));
+    if (state == NULL) { return NULL; }
     async_set_on_cancel(state, async_waiter_cancel);
     stack = state->_locals; /* Predefine locals. This trick can be used to create friendly methods. */
-    stack->child = state_;
     stack->sec = timeout;
     async_INCREF(state_);
     return state;
@@ -345,11 +381,11 @@ struct astate *async_wait_for(struct astate *state_, time_t timeout) {
 void *async_alloc_(struct astate *state, size_t size) {
     void *mem;
     int res;
-
+    if (state == NULL) { return NULL; }
     mem = malloc(size);
     if (mem == NULL) { return NULL; }
     res = async_arr_push(&state->_allocs, mem);
-    if (res == -1) {
+    if (!res) {
         free(mem);
         return NULL;
     }
