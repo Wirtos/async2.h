@@ -24,34 +24,7 @@ SOFTWARE.
 #include <string.h>
 #include <stdlib.h>
 
-
-#define async_arr_init(arr) \
-    memset((arr), 0, sizeof(*(arr)))
-
-#define async_arr_destroy(v)        \
-    (                               \
-        free((v)->data),            \
-        async_arr_init(v)           \
-    )
-
-#define async_arr_push(arr, val)                            \
-    (                                                       \
-        async_arr_expand_(async_arr_unpack_(arr), 1)        \
-            ? ((arr)->data[(arr)->length++] = (val), 1)     \
-            : 0                                             \
-    )
-
-#define async_arr_reserve(arr, n) ( async_arr_expand_(async_arr_unpack_(arr), n) )
-
-#define async_arr_unpack_(arr)\
-  (char**)&(arr)->data, &(arr)->length, &(arr)->capacity, sizeof(*(arr)->data)
-
-#define async_arr_splice(arr, start, count)                           \
-    (                                                                 \
-        async_arr_splice_(async_arr_unpack_(arr), start, count),      \
-        (arr)->length -= (count)                                      \
-    )
-
+/* array is inspired by rxi's vec: https://github.com/rxi/vec */
 static int async_arr_expand_(char **data, const size_t *len, size_t *capacity, size_t memsz, size_t n_memb) {
     void *mem;
     size_t n, needed;
@@ -59,7 +32,7 @@ static int async_arr_expand_(char **data, const size_t *len, size_t *capacity, s
     needed = *len + n_memb;
     if (needed > *capacity) {
         n = (*capacity == 0) ? 1 : *capacity << 1;
-        while (needed > n) {
+        while (needed > n) { /* Calculate power of 2 for new capacity */
             n >>= 1;
         }
         mem = realloc(*data, n * memsz);
@@ -79,6 +52,34 @@ static void async_arr_splice_(
             (*len - start - count) * memsz);
 }
 
+
+#define async_arr_init(arr) \
+    memset((arr), 0, sizeof(*(arr)))
+
+#define async_arr_destroy(arr)        \
+    (                                 \
+        free((arr)->data),            \
+        async_arr_init(arr)           \
+    )
+
+#define async_arr_push(arr, val)                            \
+    (                                                       \
+        async_arr_expand_(async_arr_unpack_(arr), 1)        \
+            ? ((arr)->data[(arr)->length++] = (val), 1)     \
+            : 0                                             \
+    )
+
+#define async_arr_reserve(arr, n) (async_arr_expand_(async_arr_unpack_(arr), n))
+
+#define async_arr_unpack_(arr)\
+  (char**)&(arr)->data, &(arr)->length, &(arr)->capacity, sizeof(*(arr)->data)
+
+#define async_arr_splice(arr, start, count)                           \
+    (                                                                 \
+        async_arr_splice_(async_arr_unpack_(arr), start, count),      \
+        (arr)->length -= (count)                                      \
+    )
+
 static int async_all_(size_t n, struct astate **states) { /* Returns false if at least one state is NULL */
     while (n--) { if (states[n] == NULL) { return 0; }}
     return 1;
@@ -86,11 +87,11 @@ static int async_all_(size_t n, struct astate **states) { /* Returns false if at
 
 static async_arr_(astate *) async_events_queue_; /* singleton array of async states */
 
-/* Free astate and its allocs completely */
+/* Free astate, its allocs and invalidate it completely */
 #define STATE_FREE(state)                                                               \
     free(state->_locals);                                                               \
     while(state->_allocs.length--) {                                                    \
-        free(state->_allocs.data[state->_allocs.length]);                                \
+        free(state->_allocs.data[state->_allocs.length]);                               \
     }                                                                                   \
     async_arr_destroy(&state->_allocs);                                                 \
     free(state)
@@ -99,7 +100,7 @@ static async_arr_(astate *) async_events_queue_; /* singleton array of async sta
 #define ASYNC_LOOP_HEAD     \
     size_t i;               \
     size_t aindex;          \
-    astate *state
+    struct astate *state
 
 #define ASYNC_LOOP_BODY                                                                 \
     for (i = 0; i < async_events_queue_.length; i++) {                                  \
@@ -181,14 +182,16 @@ struct astate **async_loop_add_tasks_(size_t n, struct astate **states) {
     if (states == NULL || !async_all_(n, states) || !async_arr_reserve(&async_events_queue_, n)) { return NULL; }
     for (i = 0; i < n; i++) {
         if (!states[i]->is_scheduled) {
-            async_arr_push(&async_events_queue_, states[i]);
+            async_arr_push(&async_events_queue_, states[i]); /* push would never fail here as we've reserved enough memory already */
         }
     }
     return states;
 }
 
 struct astate *async_new_coro_(AsyncCallback child_f, void *args, size_t stack_size) {
-    struct astate *state = calloc(1, sizeof(*state));
+    struct astate *state;
+
+    state = calloc(1, sizeof(*state));
     if (state == NULL) { return NULL; }
     state->_locals = calloc(1, stack_size);
     if (state->_locals == NULL) {
@@ -197,8 +200,8 @@ struct astate *async_new_coro_(AsyncCallback child_f, void *args, size_t stack_s
     }
     state->_func = child_f;
     state->_args = args;
-    state->_ref_cnt = 1;
-    state->_async_k = ASYNC_INIT;
+    state->_ref_cnt = 1; /* State has 1 reference set as function "owns" itself until exited or cancelled */
+    /* state->_async_k = ASYNC_INIT; state is already ASYNC_INIT because calloc */
     return state;
 }
 
@@ -344,6 +347,7 @@ static void async_waiter_cancel(struct astate *state, void *args, void *locals) 
     struct astate *child = args;
     (void) state;
     (void) locals;
+    async_cancel(child);
     async_DECREF(child);
 }
 
@@ -380,12 +384,10 @@ struct astate *async_wait_for(struct astate *state_, time_t timeout) {
 
 void *async_alloc_(struct astate *state, size_t size) {
     void *mem;
-    int res;
     if (state == NULL) { return NULL; }
     mem = malloc(size);
     if (mem == NULL) { return NULL; }
-    res = async_arr_push(&state->_allocs, mem);
-    if (!res) {
+    if (!async_arr_push(&state->_allocs, mem)) {
         free(mem);
         return NULL;
     }

@@ -84,18 +84,18 @@ typedef void (*AsyncCancelCallback)(struct astate *, void *, void *);
   struct { T *data; size_t length, capacity; }
 
 struct astate {
-    int must_cancel;
-    int is_scheduled;
-    async_error err;
+    int must_cancel; /* true if function was cancelled or will be cancelled soon */
+    int is_scheduled; /* true if function was scheduled with fawait or create_task */
+    async_error err; /* 0 if state has no errors, async_error otherwise */
 
-    long int _async_k;
-    AsyncCallback _func;
-    AsyncCancelCallback _cancel;
-    void *_args;
-    void *_locals;
-    async_arr_(void*) _allocs;
-    size_t _ref_cnt;
-    astate *_next;
+    long int _async_k; /* current execution state. ASYNC_EVT if < 3 and number of line in the function otherwise (means that state(or its function) is still running) */
+    AsyncCallback _func; /* function to be called by the event loop */
+    AsyncCancelCallback _cancel; /* function to be called in case of cancelling state, can be NULL */
+    void *_args; /* args to be passed by the event loop when calling _func */
+    void *_locals; /* function stack(locals) to be passed by the event loop when calling _func */
+    async_arr_(void*) _allocs; /* array of memory blocks managed by the event loop allocated by  async_alloc */
+    size_t _ref_cnt; /* number of functions still using this state. 1 by default, because state owns itself. If number of references is 0, the state becomes invalid and will be freed by the event loop as soon as possible */
+    struct astate *_next; /* child state used by fawait */
 };
 
 #define async_INCREF(coro) if(coro) coro->_ref_cnt++
@@ -226,10 +226,15 @@ struct astate {
         _async_p->err = ASYNC_OK;                                                                                   \
         async_INCREF(_async_p->_next);                                                                              \
         _async_p->_async_k = __LINE__; /* fall through */ case __LINE__:                                            \
-        if (!async_done(_async_p->_next)) return ASYNC_CONT;                                                        \
-        else {async_DECREF(_async_p->_next); _async_p->err = _async_p->_next->err; _async_p->_next = NULL;};        \
+        if (!async_done(_async_p->_next)) {                                                                         \
+            return ASYNC_CONT;                                                                                      \
+        }                                                                                                           \
+        else {                                                                                                      \
+            async_DECREF(_async_p->_next);                                                                          \
+            _async_p->err = _async_p->_next->err;                                                                   \
+            _async_p->_next = NULL;                                                                                 \
+        }                                                                                                           \
     } else _async_p->err = ASYNC_ERR_NOMEM
-
 
 /*
  * Allocate memory that'll be freed automatically after async function ends.
@@ -238,16 +243,16 @@ struct astate {
 #define async_alloc(size) async_alloc_(_async_p, size)
 
 /*
+ * Set function to be executed on function cancellation once. Can be used to free memory and finish some tasks.
+ */
+#define async_set_on_cancel(coro, cancel_func) (coro->_cancel=cancel_func)
+
+/*
  * Set function to be executed on function cancellation once. This version can be used inside the async function.
  * In this case cancel_func will be called only if async function has reached async_on_cancel statement
  * before async_cancel() was called on current state.
  */
-#define async_on_cancel(cancel_func) _async_p->_cancel=cancel_func
-
-/*
- * Set function to be executed on function cancellation once. Can be used to free memory and finish some tasks.
- */
-#define async_set_on_cancel(coro, cancel_func) coro->_cancel=cancel_func
+#define async_on_cancel(cancel_func) (async_set_on_cancel(_async_p, cancel_func))
 
 /*
  * Run few variadic tasks in parallel
