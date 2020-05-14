@@ -33,7 +33,7 @@ static int async_arr_expand_(char **data, const size_t *len, size_t *capacity, s
     if (needed > *capacity) {
         n = (*capacity == 0) ? 1 : *capacity << 1;
         while (needed > n) { /* Calculate power of 2 for new capacity */
-            n >>= 1;
+            n <<= 1;
         }
         mem = realloc(*data, n * memsz);
         if (mem == NULL) return 0;
