@@ -51,6 +51,10 @@ SOFTWARE.
 #include <stddef.h>
 #include <time.h>
 
+#ifdef ASYNC_DEBUG
+    #include <stdio.h>
+#endif
+
 /*
  * The async computation status
  */
@@ -113,7 +117,7 @@ struct astate {
 #ifdef ASYNC_DEBUG
 #define async_begin(k)                          \
     struct astate *_async_p = k;                \
-    fprintf(stderr, "Entered %s", __func__);    \
+    fprintf(stderr, "Entered %s\n", __func__);    \
     switch(_async_p->_async_k) { default:
 #else
 #define async_begin(k)                      \
@@ -128,7 +132,7 @@ struct astate {
 #define async_end                           \
     _async_p->_async_k=ASYNC_DONE;          \
     async_DECREF(_async_p);                 \
-    fprintf(stderr, "Exited %s", __func__); \
+    fprintf(stderr, "Exited %s\n", __func__); \
     /* fall through */                      \
     case ASYNC_DONE:                        \
     return ASYNC_DONE; } (void)0

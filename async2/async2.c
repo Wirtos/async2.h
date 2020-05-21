@@ -88,60 +88,74 @@ static int async_all_(size_t n, struct astate **states) { /* Returns false if at
 static async_arr_(astate *) async_events_queue_; /* singleton array of async states */
 
 /* Free astate, its allocs and invalidate it completely */
-#define STATE_FREE(state)                                                               \
-    free(state->_locals);                                                               \
-    while(state->_allocs.length--) {                                                    \
-        free(state->_allocs.data[state->_allocs.length]);                               \
-    }                                                                                   \
-    async_arr_destroy(&state->_allocs);                                                 \
+#define STATE_FREE(state)                                 \
+    free(state->_locals);                                 \
+    while (state->_allocs.length--) {                     \
+        free(state->_allocs.data[state->_allocs.length]); \
+    }                                                     \
+    async_arr_destroy(&state->_allocs);                   \
     free(state)
 
 
-#define ASYNC_LOOP_HEAD     \
-    size_t i;               \
-    size_t aindex;          \
+#define ASYNC_LOOP_HEAD \
+    size_t i;           \
     struct astate *state
 
-#define ASYNC_LOOP_BODY                                                                 \
-    for (i = 0; i < async_events_queue_.length; i++) {                                  \
-        state = async_events_queue_.data[i];                                            \
-        if (state->_ref_cnt == 0) {                                                     \
-            if (!async_done(state) && state->_cancel) {                                 \
-                state->_cancel(state, state->_args, state->_locals);                    \
-            }                                                                           \
-        STATE_FREE(state);                                                              \
-        async_arr_splice(&async_events_queue_, i, 1);                                   \
-        i--;                                                                            \
-        } else if (state->must_cancel) {                                                \
-            if (state->err == ASYNC_ERR_CANCELLED) {                                    \
-                /* Task is already cancelled. Let it live until no references left. */  \
-                continue;                                                               \
-            }                                                                           \
-            if (!async_done(state)) {                                                   \
-                async_DECREF(state);                                                    \
-                if(state->_cancel != NULL){                                             \
-                    state->_cancel(state, state->_args, state->_locals);                \
-                }                                                                       \
-                state->err = ASYNC_ERR_CANCELLED;                                       \
-                state->_async_k = ASYNC_DONE;                                           \
-            }                                                                           \
-            if (state->_next) {                                                         \
-                if (!async_done(state->_next)){                                         \
-                    async_DECREF(state->_next);                                         \
-                }                                                                       \
-                state->_next->must_cancel = 1;                                          \
-            }                                                                           \
-        } else {                                                                        \
-            /* Nothing special to do with this function, let it run */                  \
-            state->_func(state, state->_args, state->_locals);                          \
-        }                                                                               \
-    } (void)0
+#define ASYNC_LOOP_BODY_BEGIN                                                          \
+    for (i = 0; i < async_events_queue_.length; i++) {                                 \
+        state = async_events_queue_.data[i];                                           \
+        if (state->_ref_cnt == 0) {                                                    \
+            if (!async_done(state) && state->_cancel) {                                \
+                state->_cancel(state, state->_args, state->_locals);                   \
+            }                                                                          \
+            STATE_FREE(state);                                                         \
+            async_arr_splice(&async_events_queue_, i, 1);                              \
+            i--;                                                                       \
+        } else if (state->must_cancel) {                                               \
+            if (state->err == ASYNC_ERR_CANCELLED) {                                   \
+                /* Task is already cancelled. Let it live until no references left. */ \
+                continue;                                                              \
+            }                                                                          \
+            if (!async_done(state)) {                                                  \
+                async_DECREF(state);                                                   \
+                if (state->_cancel != NULL) {                                          \
+                    state->_cancel(state, state->_args, state->_locals);               \
+                }                                                                      \
+            }                                                                          \
+            if (state->_next) {                                                        \
+                async_DECREF(state->_next);                                            \
+                async_cancel(state->_next);                                            \
+            }                                                                          \
+            state->err = ASYNC_ERR_CANCELLED;                                          \
+            state->_async_k = ASYNC_DONE;                                              \
+        }
 
+#define ASYNC_LOOP_BODY_END \
+    }                       \
+    (void) 0
+
+#define ASYNC_LOOP_RUNNER_BODY                                     \
+    ASYNC_LOOP_BODY_BEGIN                                          \
+    else if (!async_done(state)) {                                 \
+        /* Nothing special to do with this function, let it run */ \
+        state->_func(state, state->_args, state->_locals);         \
+    }                                                              \
+    ASYNC_LOOP_BODY_END
+
+
+#define ASYNC_LOOP_DESTRUCTOR_BODY                                \
+    ASYNC_LOOP_BODY_BEGIN                                         \
+    else if (!async_cancelled(state)) {                           \
+        /* Nothing special to do with this function, cancel it */ \
+        async_cancel(state);                                      \
+        i--;                                                      \
+    }                                                             \
+    ASYNC_LOOP_BODY_END
 
 void async_loop_run_forever_(void) {
     ASYNC_LOOP_HEAD;
     while (async_events_queue_.length > 0) {
-        ASYNC_LOOP_BODY;
+        ASYNC_LOOP_RUNNER_BODY;
     }
 }
 
@@ -149,19 +163,15 @@ void async_loop_run_forever_(void) {
 void async_loop_run_until_complete_(struct astate *main) {
     ASYNC_LOOP_HEAD;
     while (main->_func(main, main->_args, main->_locals) != ASYNC_DONE) {
-        ASYNC_LOOP_BODY;
+        ASYNC_LOOP_RUNNER_BODY;
     }
     STATE_FREE(main);
 }
 
 void async_loop_destroy_(void) {
     ASYNC_LOOP_HEAD;
-    for (i = 0; i < async_events_queue_.length; i++) {
-        state = async_events_queue_.data[i];
-        if (state->_cancel) {
-            state->_cancel(state, state->_args, state->_locals);
-        }
-        STATE_FREE(state);
+    while (async_events_queue_.length > 0) {
+        ASYNC_LOOP_DESTRUCTOR_BODY;
     }
     async_arr_destroy(&async_events_queue_);
 }
@@ -182,7 +192,8 @@ struct astate **async_loop_add_tasks_(size_t n, struct astate **states) {
     if (states == NULL || !async_all_(n, states) || !async_arr_reserve(&async_events_queue_, n)) { return NULL; }
     for (i = 0; i < n; i++) {
         if (!states[i]->is_scheduled) {
-            async_arr_push(&async_events_queue_, states[i]); /* push would never fail here as we've reserved enough memory already */
+            /* push would never fail here as we've reserved enough memory already, no need to check the return value */
+            async_arr_push(&async_events_queue_, states[i]);
         }
     }
     return states;
