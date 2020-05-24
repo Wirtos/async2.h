@@ -102,9 +102,9 @@ struct astate {
     struct astate *_next; /* child state used by fawait */
 };
 
-#define async_INCREF(coro) if(coro) coro->_ref_cnt++
+#define ASYNC_INCREF(coro) if(coro) coro->_ref_cnt++
 
-#define async_DECREF(coro) if(coro) coro->_ref_cnt--
+#define ASYNC_DECREF(coro) if(coro) coro->_ref_cnt--
 
 
 /*
@@ -129,17 +129,17 @@ struct astate {
  * Mark the end of a async subroutine
  */
 #ifdef ASYNC_DEBUG
-#define async_end                           \
-    _async_p->_async_k=ASYNC_DONE;          \
-    async_DECREF(_async_p);                 \
-    fprintf(stderr, "Exited %s\n", __func__); \
-    /* fall through */                      \
-    case ASYNC_DONE:                        \
+#define async_end                            \
+    _async_p->_async_k=ASYNC_DONE;           \
+    ASYNC_DECREF(_async_p);                  \
+    fprintf(stderr, "Exited %s\n", __func__);\
+    /* fall through */                       \
+    case ASYNC_DONE:                         \
     return ASYNC_DONE; } (void)0
 #else
 #define async_end                           \
     _async_p->_async_k=ASYNC_DONE;          \
-    async_DECREF(_async_p);                 \
+    ASYNC_DECREF(_async_p);                 \
     /* fall through */                      \
     case ASYNC_DONE:                        \
     return ASYNC_DONE; } (void)0
@@ -168,7 +168,7 @@ struct astate {
 /*
  * Exit the current async subroutine
  */
-#define async_exit _async_p->_async_k = ASYNC_DONE; async_DECREF(_async_p); return ASYNC_DONE
+#define async_exit _async_p->_async_k = ASYNC_DONE; ASYNC_DECREF(_async_p); return ASYNC_DONE
 
 /*
  * Cancels running coroutine
@@ -228,13 +228,13 @@ struct astate {
     _async_p->_next = async_create_task(coro);                                                                      \
     if(_async_p->_next != NULL){                                                                                    \
         _async_p->err = ASYNC_OK;                                                                                   \
-        async_INCREF(_async_p->_next);                                                                              \
+        ASYNC_INCREF(_async_p->_next);                                                                              \
         _async_p->_async_k = __LINE__; /* fall through */ case __LINE__:                                            \
         if (!async_done(_async_p->_next)) {                                                                         \
             return ASYNC_CONT;                                                                                      \
         }                                                                                                           \
         else {                                                                                                      \
-            async_DECREF(_async_p->_next);                                                                          \
+            ASYNC_DECREF(_async_p->_next);                                                                          \
             _async_p->err = _async_p->_next->err;                                                                   \
             _async_p->_next = NULL;                                                                                 \
         }                                                                                                           \
@@ -246,6 +246,8 @@ struct astate {
  */
 #define async_alloc(size) async_alloc_(_async_p, size)
 
+#define async_free(ptr) async_free_(_async_p, ptr)
+
 /*
  * Set function to be executed on function cancellation once. Can be used to free memory and finish some tasks.
  */
@@ -256,7 +258,7 @@ struct astate {
  * In this case cancel_func will be called only if async function has reached async_on_cancel statement
  * before async_cancel() was called on current state.
  */
-#define async_on_cancel(cancel_func) (async_set_on_cancel(_async_p, cancel_func))
+#define async_on_cancel(cancel_func) async_set_on_cancel(_async_p, cancel_func)
 
 /*
  * Run few variadic tasks in parallel
@@ -299,5 +301,7 @@ void async_loop_run_until_complete_(struct astate *main);
 void async_loop_destroy_(void);
 
 void *async_alloc_(struct astate *state, size_t size);
+
+int async_free_(struct astate *state, void *mem);
 
 #endif

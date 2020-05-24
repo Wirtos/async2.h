@@ -117,13 +117,13 @@ static async_arr_(astate *) async_events_queue_; /* singleton array of async sta
                 continue;                                                              \
             }                                                                          \
             if (!async_done(state)) {                                                  \
-                async_DECREF(state);                                                   \
+                ASYNC_DECREF(state);                                                   \
                 if (state->_cancel != NULL) {                                          \
                     state->_cancel(state, state->_args, state->_locals);               \
                 }                                                                      \
             }                                                                          \
             if (state->_next) {                                                        \
-                async_DECREF(state->_next);                                            \
+                ASYNC_DECREF(state->_next);                                            \
                 async_cancel(state->_next);                                            \
             }                                                                          \
             state->err = ASYNC_ERR_CANCELLED;                                          \
@@ -229,7 +229,7 @@ void async_gathered_cancel(struct astate *state, void *args, void *locals_) {
     (void) state;
     (void) args;
     for (i = 0; i < locals->n_coros; i++) {
-        async_DECREF(locals->arr_coros[i]);
+        ASYNC_DECREF(locals->arr_coros[i]);
         async_cancel(locals->arr_coros[i]);
     }
 }
@@ -246,7 +246,7 @@ static async async_gatherer(struct astate *state, void *args, void *locals_) {
                     if (!async_done(locals->arr_coros[i])) {
                         done = 0;
                     } else { /* Remove coroutine from list of tracked coros */
-                        async_DECREF(locals->arr_coros[i]);
+                        ASYNC_DECREF(locals->arr_coros[i]);
                         locals->n_coros--;
                         memmove(&locals->arr_coros[i], &locals->arr_coros[i + 1],
                                 sizeof(*locals->arr_coros) * (locals->n_coros - i));
@@ -294,7 +294,7 @@ struct astate *async_vgather(size_t n, ...) {
         STATE_FREE(state);
     }
     for (i = 0; i < n; i++) {
-        async_INCREF(stack->arr_coros[i]);
+        ASYNC_INCREF(stack->arr_coros[i]);
     }
 
     va_end(v_args);
@@ -319,7 +319,7 @@ struct astate *async_gather(size_t n, struct astate **states) {
         return NULL;
     }
     for (i = 0; i < n; i++) {
-        async_INCREF(stack->arr_coros[i]);
+        ASYNC_INCREF(stack->arr_coros[i]);
     }
     return state;
 }
@@ -359,7 +359,7 @@ static void async_waiter_cancel(struct astate *state, void *args, void *locals) 
     (void) state;
     (void) locals;
     async_cancel(child);
-    async_DECREF(child);
+    ASYNC_DECREF(child);
 }
 
 static async async_waiter(struct astate *state, void *args, void *locals_) {
@@ -376,7 +376,7 @@ static async async_waiter(struct astate *state, void *args, void *locals_) {
                 async_errno = ASYNC_ERR_CANCELLED;
                 async_cancel(child);
             }
-            async_DECREF(child);
+            ASYNC_DECREF(child);
     async_end;
 }
 
@@ -389,7 +389,7 @@ struct astate *async_wait_for(struct astate *state_, time_t timeout) {
     async_set_on_cancel(state, async_waiter_cancel);
     stack = state->_locals; /* Predefine locals. This trick can be used to create friendly methods. */
     stack->sec = timeout;
-    async_INCREF(state_);
+    ASYNC_INCREF(state_);
     return state;
 }
 
@@ -403,4 +403,20 @@ void *async_alloc_(struct astate *state, size_t size) {
         return NULL;
     }
     return mem;
+}
+
+int async_free_(struct astate *state, void *mem) {
+    size_t i;
+    void *obj;
+
+    i = state->_allocs.length;
+    while (i--){
+        obj = state->_allocs.data[i];
+        if (obj == mem) {
+            free(obj);
+            async_arr_splice(&state->_allocs, i, 1);
+            return 1;
+        }
+    }
+    return 0;
 }
