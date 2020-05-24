@@ -20,7 +20,7 @@ __AsyncCancelCallback__| pointer to a cancel function with signature: `void func
 __ASYNC\_NOLOCALS__|Type to imply empty function stack(locals) when creating new coro with `async_new`.
 __async_error__|Enum type with async errors
 
-Function|Description
+Function/Macro|Description
 --------|-----------
 *async_loop_init()*|Init new event loop
 *async_loop_destroy()*|Destroy inited event loop, cancel and destroy all the tasks inside
@@ -37,6 +37,8 @@ Function|Description
 *async_vgather(n_coros, ...)*|Variadic version of async_gather, expects coros to be passed directly
 *async_sleep(time_t delay)*|Block execution for `delay` seconds
 *async_wait_for(struct astate \* coro, time_t timeout)*| Wait for the coro to complete with a timeout. Cancel it otherwise.
+*async_alloc(size)* | Allocate memory automatically managed by event loop
+*async_free(ptr)* | Free `ptr` allocated with async_alloc without waiting for event loop to do it for you. Can be useful in long running tasks, but malloc with cancel function is preferable and faster anyway.
 *async_create_task(coro)*|Add task to the event loop without blocking current progress
 *async_cancel(coro)*| Cancels current coro. Note, that if coro operates some custom memory not allocated with async_alloc it'll result in a memory leak.
 *async_cancelled(coro)*|Returns true if coro was cancelled, false otherwise
@@ -49,8 +51,8 @@ Function|Description
 ### (handled automatically by fawait/wait_for/gather coros, manual use only)
 Function|Description
 --------|-----------
-*async_INCREF(coro)*|Mark coro as "currently in use", so it won't be deleted automatically. Must be followed by async_DECREF somewhere else in the async function/cancel function". 
-*async_DECREF(coro)*|Mark coro as "isn't used anymore". Note, that it won't be deleted immediately if other functions used INCREF on this coro too
+*ASYNC_INCREF(coro)*|Mark coro as "currently in use", so it won't be deleted automatically. Must be followed by ASYNC_DECREF somewhere else in the async function/cancel function". 
+*ASYNC_DECREF(coro)*|Mark coro as "isn't used anymore". Note, that it won't be deleted immediately if other functions used INCREF on this coro too
 
 # Practices 
 - How can I return value/values from the function?
@@ -122,14 +124,14 @@ if(task == NULL){
     /* Memory problem! */
     abort();
 }
-async_INCREF(task); /* Acquire ownership for task so it won't be immediately deleted after completion */
+ASYNC_INCREF(task); /* Acquire ownership for task so it won't be immediately deleted after completion */
 /* Do stuff... */
 await(async_done(task));
 if(task->err != ASYNC_OK){
     /* Handle task error */
 }
 
-async_DECREF(task);
+ASYNC_DECREF(task);
 ```
 ## Don't create libraries with async_new usage!
 - Always wrap coroutines in such way as asyncio_sleep or asyncio_wait_for so their use will be very simple(no need to use async_new on them as they prepare), such way you can provide custom async functions that can take any arguments, but return type still will be limited to astate \*.
