@@ -69,7 +69,7 @@ static void async_arr_splice_(
             : 0                                             \
     )
 
-#define async_arr_reserve(arr, n) (async_arr_expand_(async_arr_unpack_(arr), n))
+#define async_arr_reserve(arr, n) async_arr_expand_(async_arr_unpack_(arr), n)
 
 #define async_arr_unpack_(arr)\
   (char**)&(arr)->data, &(arr)->length, &(arr)->capacity, sizeof(*(arr)->data)
@@ -410,7 +410,7 @@ int async_free_(struct astate *state, void *mem) {
     void *obj;
 
     i = state->_allocs.length;
-    while (i--){
+    while (i--) {
         obj = state->_allocs.data[i];
         if (obj == mem) {
             free(obj);

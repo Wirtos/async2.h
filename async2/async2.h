@@ -102,9 +102,13 @@ struct astate {
     struct astate *_next; /* child state used by fawait */
 };
 
-#define ASYNC_INCREF(coro) if(coro) coro->_ref_cnt++
+#define ASYNC_INCREF(coro) coro->_ref_cnt++
 
-#define ASYNC_DECREF(coro) if(coro) coro->_ref_cnt--
+#define ASYNC_DECREF(coro) coro->_ref_cnt--
+
+#define ASYNC_XINCREF(coro) if(coro) ASYNC_INCREF(coro)
+
+#define ASYNC_XDECREF(coro) if(coro) ASYNC_DECREF(coro)
 
 
 /*
