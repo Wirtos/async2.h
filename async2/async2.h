@@ -177,12 +177,12 @@ struct astate {
 /*
  * Cancels running coroutine
  */
-#define async_cancel(coro) coro->must_cancel=1
+#define async_cancel(coro) ((coro)->must_cancel=1)
 
 /*
  * returns 1 if function was cancelled
  */
-#define async_cancelled(coro) (coro->must_cancel == 1)
+#define async_cancelled(coro) ((coro)->must_cancel==1)
 
 /*
  * Check if async subroutine is done
@@ -213,7 +213,7 @@ struct astate {
 /*
  * Create a new coro
  */
-#define async_new(call_func, args, locals) async_new_coro_(call_func, args, sizeof(locals))
+#define async_new(call_func, args, locals) async_new_coro_((call_func), (args), sizeof(locals))
 
 /*
  * Create task from coro

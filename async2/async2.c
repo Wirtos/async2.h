@@ -56,28 +56,28 @@ static void async_arr_splice_(
 #define async_arr_init(arr) \
     memset((arr), 0, sizeof(*(arr)))
 
-#define async_arr_destroy(arr)        \
-    (                                 \
-        free((arr)->data),            \
-        async_arr_init(arr)           \
+#define async_arr_destroy(arr) \
+    (                          \
+            free((arr)->data), \
+            async_arr_init(arr)\
     )
 
-#define async_arr_push(arr, val)                            \
-    (                                                       \
-        async_arr_expand_(async_arr_unpack_(arr), 1)        \
-            ? ((arr)->data[(arr)->length++] = (val), 1)     \
-            : 0                                             \
+#define async_arr_push(arr, val)                                \
+    (                                                           \
+            async_arr_expand_(async_arr_unpack_(arr), 1)        \
+                    ? ((arr)->data[(arr)->length++] = (val), 1) \
+                    : 0                                         \
     )
 
 #define async_arr_reserve(arr, n) async_arr_expand_(async_arr_unpack_(arr), n)
 
-#define async_arr_unpack_(arr)\
-  (char**)&(arr)->data, &(arr)->length, &(arr)->capacity, sizeof(*(arr)->data)
+#define async_arr_unpack_(arr) \
+    (char **) &(arr)->data, &(arr)->length, &(arr)->capacity, sizeof(*(arr)->data)
 
-#define async_arr_splice(arr, start, count)                           \
-    (                                                                 \
-        async_arr_splice_(async_arr_unpack_(arr), start, count),      \
-        (arr)->length -= (count)                                      \
+#define async_arr_splice(arr, start, count)                          \
+    (                                                                \
+            async_arr_splice_(async_arr_unpack_(arr), start, count), \
+            (arr)->length -= (count)                                 \
     )
 
 static int async_all_(size_t n, struct astate **states) { /* Returns false if at least one state is NULL */
@@ -88,12 +88,12 @@ static int async_all_(size_t n, struct astate **states) { /* Returns false if at
 static async_arr_(astate *) async_events_queue_; /* singleton array of async states */
 
 /* Free astate, its allocs and invalidate it completely */
-#define STATE_FREE(state)                                 \
-    free(state->_locals);                                 \
-    while (state->_allocs.length--) {                     \
-        free(state->_allocs.data[state->_allocs.length]); \
-    }                                                     \
-    async_arr_destroy(&state->_allocs);                   \
+#define STATE_FREE(state)                                     \
+    free((state)->_locals);                                   \
+    while ((state)->_allocs.length--) {                       \
+        free((state)->_allocs.data[(state)->_allocs.length]); \
+    }                                                         \
+    async_arr_destroy(&(state)->_allocs);                     \
     free(state)
 
 
