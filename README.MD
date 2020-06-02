@@ -15,8 +15,8 @@ this is an async/await/fawait/event loop implementation for C based on Duff's de
 
 Types|Description
 -----|-------
-__AsyncCallback__| pointer to an async function with signature: `async funcname(struct astate *state, void *args, void *locals)`
-__AsyncCancelCallback__| pointer to a cancel function with signature: `void funcname(struct astate *state, void *args, void *locals)`
+__AsyncCallback__| pointer to an async function with signature: `async funcname(struct astate *state)`
+__AsyncCancelCallback__| pointer to a cancel function with signature: `void funcname(struct astate *state)`
 __ASYNC\_NOLOCALS__|Type to imply empty function stack(locals) when creating new coro with `async_new`.
 __async_error__|Enum type with async errors
 
@@ -59,16 +59,15 @@ Function|Description
 
 Pass pointer to value as args when creating new coroutine with async_new. Then assign to pointer inside function body:
 ```C
-async f(state, void *args_, void *locals_){
+async f(state){
     async_begin(state);
-    int *res = args_;
+    int *res = state->args; /* args here is a pointer to int a (can be a pointer to any c object) */
     *res = 42;
     ...
 }
 ...
 int a;
-create_task(async_new(f, &a, ASYNC_NOLOCALS));
-run();
+fawait(async_new(f, &a, ASYNC_NOLOCALS));
 ```
 
 We can replace int * with, say, struct * if we want multiple return values of different types. Any type pointer is fine.
@@ -88,9 +87,9 @@ struct amain_stack {
     int i;
 };
 
-async amain(struct astate *state, void *args_, void *locals_) {
-    struct amain_stack *locals = locals_;
-    char *args = args_;
+async amain(struct astate *state) {
+    struct amain_stack *locals = state->locals;
+    char *args = state->args;
     async_begin(state);
             /* Note, that locals->i assignment to 0 is happening inside async_begin block. 
              * Don't assign them outside! */
@@ -120,11 +119,7 @@ if(async_errno == ASYNC_ERR_NOMEM){
 ---
 ```c
 struct astate *task = async_create_task(coro());
-if(task == NULL){
-    /* Memory problem! */
-    abort();
-}
-ASYNC_INCREF(task); /* Acquire ownership for task so it won't be immediately deleted after completion */
+ASYNC_XINCREF(task); /* Acquire ownership for task so it won't be immediately deleted after completion */
 /* Do stuff... */
 await(async_done(task));
 if(task->err != ASYNC_OK){
@@ -135,7 +130,7 @@ ASYNC_DECREF(task);
 ```
 ## Don't create libraries with async_new usage!
 - Always wrap coroutines in such way as asyncio_sleep or asyncio_wait_for so their use will be very simple(no need to use async_new on them as they prepare), such way you can provide custom async functions that can take any arguments, but return type still will be limited to astate \*.
-- Use underlying dev methods as async_new_coro_ in order to overcome userland limitations in creating async functions
+- Use underlying dev methods as async_new_coro_ and async_alloc_ in order to overcome userland limitations in creating async functions
 - Always wrap all the used tasks with ownership, otherwise you risk to get invalid pointer access. Remember: one INCREF - one DECREF
 - Provide cancel functions for your friendly methods, so even cancelled function won't break ownership and coro will be properly deleted.
 - Use async_alloc(_) to manage dynamic memory
