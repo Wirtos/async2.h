@@ -80,9 +80,9 @@ typedef struct astate astate;
 /*
  * Core async type, every async function must follow this signature.
  */
-typedef async (*AsyncCallback)(struct astate *, void *, void *);
+typedef async (*AsyncCallback)(struct astate *);
 
-typedef void (*AsyncCancelCallback)(struct astate *, void *, void *);
+typedef void (*AsyncCancelCallback)(struct astate *);
 
 #define async_arr_(T)\
   struct { T *data; size_t length, capacity; }
@@ -91,12 +91,12 @@ struct astate {
     int must_cancel; /* true if function was cancelled or will be cancelled soon */
     int is_scheduled; /* true if function was scheduled with fawait or create_task */
     async_error err; /* 0 if state has no errors, async_error otherwise */
+    void *args; /* args to be passed along with state to the async function */
+    void *locals; /* function stack(locals) to be passed with state to the async function */
 
     long int _async_k; /* current execution state. ASYNC_EVT if < 3 and number of line in the function otherwise (means that state(or its function) is still running) */
     AsyncCallback _func; /* function to be called by the event loop */
     AsyncCancelCallback _cancel; /* function to be called in case of cancelling state, can be NULL */
-    void *_args; /* args to be passed by the event loop when calling _func */
-    void *_locals; /* function stack(locals) to be passed by the event loop when calling _func */
     async_arr_(void*) _allocs; /* array of memory blocks managed by the event loop allocated by  async_alloc */
     size_t _ref_cnt; /* number of functions still using this state. 1 by default, because state owns itself. If number of references is 0, the state becomes invalid and will be freed by the event loop as soon as possible */
     struct astate *_next; /* child state used by fawait */

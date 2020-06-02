@@ -89,7 +89,7 @@ static async_arr_(astate *) async_events_queue_; /* singleton array of async sta
 
 /* Free astate, its allocs and invalidate it completely */
 #define STATE_FREE(state)                                     \
-    free((state)->_locals);                                   \
+    free((state)->locals);                                    \
     while ((state)->_allocs.length--) {                       \
         free((state)->_allocs.data[(state)->_allocs.length]); \
     }                                                         \
@@ -106,7 +106,7 @@ static async_arr_(astate *) async_events_queue_; /* singleton array of async sta
         state = async_events_queue_.data[i];                                           \
         if (state->_ref_cnt == 0) {                                                    \
             if (!async_done(state) && state->_cancel) {                                \
-                state->_cancel(state, state->_args, state->_locals);                   \
+                state->_cancel(state);                                                 \
             }                                                                          \
             STATE_FREE(state);                                                         \
             async_arr_splice(&async_events_queue_, i, 1);                              \
@@ -119,7 +119,7 @@ static async_arr_(astate *) async_events_queue_; /* singleton array of async sta
             if (!async_done(state)) {                                                  \
                 ASYNC_DECREF(state);                                                   \
                 if (state->_cancel != NULL) {                                          \
-                    state->_cancel(state, state->_args, state->_locals);               \
+                    state->_cancel(state);                                             \
                 }                                                                      \
             }                                                                          \
             if (state->_next) {                                                        \
@@ -138,7 +138,7 @@ static async_arr_(astate *) async_events_queue_; /* singleton array of async sta
     ASYNC_LOOP_BODY_BEGIN                                          \
     else if (!async_done(state)) {                                 \
         /* Nothing special to do with this function, let it run */ \
-        state->_func(state, state->_args, state->_locals);         \
+        state->_func(state);                                       \
     }                                                              \
     ASYNC_LOOP_BODY_END
 
@@ -162,7 +162,7 @@ void async_loop_run_forever_(void) {
 
 void async_loop_run_until_complete_(struct astate *main) {
     ASYNC_LOOP_HEAD;
-    while (main->_func(main, main->_args, main->_locals) != ASYNC_DONE) {
+    while (main->_func(main) != ASYNC_DONE) {
         ASYNC_LOOP_RUNNER_BODY;
     }
     STATE_FREE(main);
@@ -204,13 +204,13 @@ struct astate *async_new_coro_(AsyncCallback child_f, void *args, size_t stack_s
 
     state = calloc(1, sizeof(*state));
     if (state == NULL) { return NULL; }
-    state->_locals = calloc(1, stack_size);
-    if (state->_locals == NULL) {
+    state->locals = calloc(1, stack_size);
+    if (state->locals == NULL) {
         free(state);
         return NULL;
     }
     state->_func = child_f;
-    state->_args = args;
+    state->args = args;
     state->_ref_cnt = 1; /* State has 1 reference set as function "owns" itself until exited or cancelled */
     /* state->_async_k = ASYNC_INIT; state is already ASYNC_INIT because calloc */
     return state;
@@ -223,23 +223,20 @@ typedef struct {
     size_t n_coros;
 } gathered_stack;
 
-void async_gathered_cancel(struct astate *state, void *args, void *locals_) {
-    gathered_stack *locals = locals_;
+void async_gathered_cancel(struct astate *state) {
+    gathered_stack *locals = state->locals;
     size_t i;
-    (void) state;
-    (void) args;
     for (i = 0; i < locals->n_coros; i++) {
         ASYNC_DECREF(locals->arr_coros[i]);
         async_cancel(locals->arr_coros[i]);
     }
 }
 
-static async async_gatherer(struct astate *state, void *args, void *locals_) {
-    gathered_stack *locals = locals_;
+static async async_gatherer(struct astate *state) {
+    gathered_stack *locals = state->locals;
     size_t i;
     int done;
     async_begin(state);
-            (void) args;
             while (1) {
                 done = 1;
                 for (i = 0; i < locals->n_coros; i++) {
@@ -272,7 +269,7 @@ struct astate *async_vgather(size_t n, ...) {
     if (state == NULL) { return NULL; }
 
     async_set_on_cancel(state, async_gathered_cancel);
-    stack = state->_locals;
+    stack = state->locals;
     stack->n_coros = n;
     stack->arr_coros = async_alloc_(state, sizeof(state) * n);
     if (stack->arr_coros == NULL) {
@@ -311,7 +308,7 @@ struct astate *async_gather(size_t n, struct astate **states) {
     if (state == NULL) { return NULL; }
     async_set_on_cancel(state, async_gathered_cancel);
 
-    stack = state->_locals;
+    stack = state->locals;
     stack->n_coros = n;
     stack->arr_coros = states;
     if (!async_loop_add_tasks_(n, states)) {
@@ -330,10 +327,9 @@ typedef struct {
 } sleeper_stack;
 
 
-static async async_sleeper(struct astate *state, void *args, void *locals_) {
-    sleeper_stack *locals = locals_;
+static async async_sleeper(struct astate *state) {
+    sleeper_stack *locals = state->locals;
     async_begin(state);
-            (void) args;
             locals->timer = time(NULL);
             await(locals->timer + locals->sec <= time(NULL));
     async_end;
@@ -345,7 +341,7 @@ struct astate *async_sleep(time_t delay) {
 
     state = async_new_coro_(async_sleeper, NULL, sizeof(*stack));
     if (state == NULL) { return NULL; }
-    stack = state->_locals;
+    stack = state->locals; /* Yet another predefined locals trick for mere optimisation, use async_alloc_ in real adapter functions instead. */
     stack->sec = delay;
     return state;
 }
@@ -354,19 +350,16 @@ typedef struct {
     time_t sec;
 } waiter_stack;
 
-static void async_waiter_cancel(struct astate *state, void *args, void *locals) {
-    struct astate *child = args;
-    (void) state;
-    (void) locals;
+static void async_waiter_cancel(struct astate *state) {
+    struct astate *child = state->args;
     async_cancel(child);
     ASYNC_DECREF(child);
 }
 
-static async async_waiter(struct astate *state, void *args, void *locals_) {
-    waiter_stack *locals = locals_;
-    struct astate *child = args;
+static async async_waiter(struct astate *state) {
+    waiter_stack *locals = state->locals;
+    struct astate *child = state->args;
     async_begin(state);
-            (void) args;
             if (!async_create_task(child)) {
                 async_errno = ASYNC_ERR_NOMEM;
                 async_exit;
@@ -387,7 +380,7 @@ struct astate *async_wait_for(struct astate *state_, time_t timeout) {
     state = async_new_coro_(async_waiter, state_, sizeof(*stack));
     if (state == NULL) { return NULL; }
     async_set_on_cancel(state, async_waiter_cancel);
-    stack = state->_locals; /* Predefine locals. This trick can be used to create friendly methods. */
+    stack = state->locals; /* Predefine locals. This trick can be used to create friendly methods. */
     stack->sec = timeout;
     ASYNC_INCREF(state_);
     return state;
