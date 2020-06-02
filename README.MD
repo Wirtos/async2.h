@@ -9,7 +9,7 @@ this is an async/await/fawait/event loop implementation for C based on Duff's de
 2. It uses 96 bytes of memory per state, but grants you seamless nesting abilities, errors and stack management.
 3. It's not dependent on an OS.
 4. It's a bit simpler to understand than other implementations as async state/stack management is fully handled by the lib.
-5. You can't preserve local variables across function calls, but lib provides a way to store them persistently (see practices)
+5. You can't preserve local variables across function calls, but lib provides a way to store them persistently (see [practices](#practices))
 
 # API
 
@@ -142,3 +142,21 @@ ASYNC_DECREF(task);
 2. As with protothreads, you can't make blocking system calls and preserve
    the async semantics. These must be changed into non-blocking calls that
    test a condition.
+3. You can't use setjump and longjump functions amid await because async2 alters usual function flow, so given code is fine:
+```c
+setjmp(var);
+... 
+longjump(var);
+...
+await(global == 42);
+```
+but this one will be an undefined behavior:
+```c
+setjmp(var);
+... 
+await(global == 42);
+...
+longjump(var);
+```
+That means no way you can use C exceptions libraries like exceptions4c to wrap fawait or await or yield calls, use async_errno instead.
+
