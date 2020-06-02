@@ -14,10 +14,8 @@ struct f1_stack {
     void *mem;
 };
 
-async f4(struct astate *state, void *args, void *locals) {
+async f4(struct astate *state) {
     async_begin(state);
-            (void) args;
-            (void) locals;
             puts("f4 call 1");
             async_yield;
             puts("f4 call 2");
@@ -25,9 +23,9 @@ async f4(struct astate *state, void *args, void *locals) {
 }
 
 
-async f3(struct astate *state, void *args, void *locals_) {
-    int *i = locals_;
-    struct f3_args *res = args; /* Pointer assignment from locals or args is fine outside async_begin, but value assignment isn't. */
+async f3(struct astate *state) {
+    int *i = state->locals;
+    struct f3_args *res = state->args; /* Pointer assignment from locals or args is fine outside async_begin, but value assignment isn't. */
     async_begin(state);
             for (*i = 0; *i < 3; (*i)++) {
                 printf("f3 %d\n", (*i) + 1);
@@ -38,17 +36,15 @@ async f3(struct astate *state, void *args, void *locals_) {
     async_end;
 }
 
-async f2(struct astate *state, void *args, void *locals) {
+async f2(struct astate *state) {
     async_begin(state);
-            (void) locals;
-            (void) args;
             puts("f2 call");
     async_end;
 }
 
-async f1(struct astate *state, void *args, void *locals_) {
-    struct f1_stack *locals = locals_;
-    char *text = args;
+async f1(struct astate *state) {
+    struct f1_stack *locals = state->locals;
+    char *text = state->args;
 
     async_begin(state);
             for (locals->i = 0; locals->i < 3; locals->i++) {
