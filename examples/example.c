@@ -64,11 +64,12 @@ async f1(struct astate *state) {
 
 
 int main() {
-    async_loop_init(); /* Init event loop and create some tasks to run them later. */
+    struct async_event_loop *loop = async_get_event_loop();
+    loop->init(); /* Init event loop and create some tasks to run them later. */
     async_create_task(async_new(f1, "first", struct f1_stack));
     async_create_task(async_new(f2, NULL, ASYNC_NOLOCALS));
     async_create_task(async_new(f1, "second", struct f1_stack));
-    async_loop_run_forever(); /* Block execution and run all tasks. */
-    async_loop_destroy();
+    loop->run_forever(); /* Block execution and run all tasks. */
+    loop->destroy();
     return 0;
 }
