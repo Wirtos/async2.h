@@ -14,7 +14,7 @@ struct f1_stack {
     void *mem;
 };
 
-async f4(struct astate *state) {
+async f4(s_astate *state) {
     async_begin(state);
             puts("f4 call 1");
             async_yield;
@@ -23,7 +23,7 @@ async f4(struct astate *state) {
 }
 
 
-async f3(struct astate *state) {
+async f3(s_astate *state) {
     int *i = state->locals;
     struct f3_args *res = state->args; /* Pointer assignment from locals or args is fine outside async_begin, but value assignment isn't. */
     async_begin(state);
@@ -36,13 +36,13 @@ async f3(struct astate *state) {
     async_end;
 }
 
-async f2(struct astate *state) {
+async f2(s_astate *state) {
     async_begin(state);
             puts("f2 call");
     async_end;
 }
 
-async f1(struct astate *state) {
+async f1(s_astate *state) {
     struct f1_stack *locals = state->locals;
     char *text = state->args;
 
