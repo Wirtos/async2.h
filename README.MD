@@ -90,7 +90,7 @@ struct amain_stack {
     int i;
 };
 
-async amain(struct astate *state) {
+async amain(s_astate *state) {
     struct amain_stack *locals = state->locals;
     char *args = state->args;
     async_begin(state);
@@ -105,14 +105,14 @@ async amain(struct astate *state) {
 }
 
 int main(void) {
-    async_loop_init();
+    struct async_event_loop *loop = async_get_event_loop();
     async_create_task(async_new(amain, "task 1", struct amain_stack)); /* Allocate enough memory to hold locals of type struct amain_stack */
     async_create_task(async_new(amain, "task 2", struct amain_stack));
-    async_loop_run_forever();
-    async_loop_destroy();
+    loop->run_forever();
+    loop->destroy();
 }
 ```
-## Always check async_errno after every fawait, that way you'll be sure that function executed correctly:
+## Always check async_errno after every fawait, that way you'll be sure that coroutine executed correctly:
 ```c
 fawait(async_func(10));
 if(async_errno == ASYNC_ERR_NOMEM){
