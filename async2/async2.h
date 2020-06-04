@@ -298,7 +298,7 @@ struct astate *async_wait_for(struct astate *state, time_t timeout);
 
 struct async_event_loop *async_get_event_loop(void);
 
-void async_set_event_loop(struct async_event_loop *);
+void async_set_event_loop(struct async_event_loop);
 
 /*
  * Internal functions, use with caution! (At least read the code)

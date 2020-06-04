@@ -442,6 +442,6 @@ struct async_event_loop *async_get_event_loop(void) {
     return &event_loop;
 }
 
-void async_set_event_loop(struct async_event_loop *loop) {
-    event_loop = *loop;
+void async_set_event_loop(struct async_event_loop loop) {
+    event_loop = loop;
 }
