@@ -9,7 +9,7 @@ this is an async/await/fawait/event loop implementation for C based on Duff's de
 2. It uses 96 bytes of memory per state, but grants you seamless nesting abilities, errors and stack management.
 3. It's not dependent on an OS.
 4. It's a bit simpler to understand than other implementations as async state/stack management is fully handled by the lib.
-5. You can't preserve local variables across function calls, but lib provides a way to store them persistently (see [practices](#practices))
+5. You can't preserve local variables across function calls, but the library provides a way to store them persistently (see [practices](#practices))
 
 # API
 
@@ -22,10 +22,12 @@ __async_error__|Enum type with async errors
 
 Function/Macro|Description
 --------|-----------
-*async_loop_init()*|Init new event loop
-*async_loop_destroy()*|Destroy inited event loop, cancel and destroy all the tasks inside
-*async_loop_run_forever()*|Block and run event loop until there's no uncompleted tasks
-*async_loop_run_until_complete(main_coro)*|Block and run event loop until main_coro completes. Can be called any number of times preserving uncompleted tasks state
+*async_get_event_loop()*|Get current event loop
+*async_set_event_loop(loop)*|
+*loop->init()*|Init new event loop
+*loop->destroy()*|Destroy inited event loop, cancel and destroy all the tasks inside
+*loop->run_forever()*|Block and run event loop until there's no uncompleted tasks
+*loop->loop_run_until_complete(main_coro)*|Block and run event loop until main_coro completes. Can be called any number of times preserving uncompleted tasks state
 *async_begin(state)*|Mark the beginning of an async subroutine
 *async_end*|Mark the end of an async subroutine
 *fawait(coro)*|Add task to the event loop and block progress until coro is done executing. Sets async_errno.
@@ -40,6 +42,7 @@ Function/Macro|Description
 *async_alloc(size)* | Allocate memory automatically managed by event loop
 *async_free(ptr)* | Free `ptr` allocated with async_alloc without waiting for event loop to do it for you. Can be useful in long running tasks, but malloc with cancel function is preferable and faster anyway.
 *async_create_task(coro)*|Add task to the event loop without blocking current progress
+*async_create_tasks(n, coros)*|Add n tasks from array of states to the event loop without blocking current progress, does nothing if one of the states is NULL or if there's not enough memory to add them 
 *async_cancel(coro)*| Cancels current coro. Note, that if coro operates some custom memory not allocated with async_alloc it'll result in a memory leak.
 *async_cancelled(coro)*|Returns true if coro was cancelled, false otherwise
 *async_on_cancel(cancel_func)*|Set cancel function to be called on cancel for current async functions. cancel_func must follow AsyncCancelCallback type signature
