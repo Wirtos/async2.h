@@ -74,7 +74,7 @@ typedef enum ASYNC_ERR {
  */
 typedef char ASYNC_NOLOCALS;
 
-typedef struct astate astate;
+typedef struct astate s_astate;
 
 
 /*
@@ -97,10 +97,27 @@ struct astate {
     long int _async_k; /* current execution state. ASYNC_EVT if < 3 and number of line in the function otherwise (means that state(or its function) is still running) */
     AsyncCallback _func; /* function to be called by the event loop */
     AsyncCancelCallback _cancel; /* function to be called in case of cancelling state, can be NULL */
-    async_arr_(void*) _allocs; /* array of memory blocks managed by the event loop allocated by  async_alloc */
+    async_arr_(void*) _allocs; /* array of memory blocks allocated by async_alloc and managed by the event loop */
     size_t _ref_cnt; /* number of functions still using this state. 1 by default, because state owns itself. If number of references is 0, the state becomes invalid and will be freed by the event loop as soon as possible */
     struct astate *_next; /* child state used by fawait */
 };
+
+struct async_event_loop {
+    async_arr_(struct astate *) events_queue;
+
+    void (*init)();
+
+    void (*destroy)();
+
+    struct astate *(*add_task)(struct astate *);
+
+    struct astate **(*add_tasks)(size_t n, struct astate **states);
+
+    void (*run_forever)(void);
+
+    void (*run_until_complete)(struct astate *);
+};
+
 
 #define ASYNC_INCREF(coro) coro->_ref_cnt++
 
@@ -191,26 +208,6 @@ struct astate {
 
 
 /*
- * Run until there's no tasks left
- */
-#define async_loop_run_forever() async_loop_run_forever_()
-
-/*
- * Run until main coro succeeds
- */
-#define async_loop_run_until_complete(main_coro) async_loop_run_until_complete_(main_coro)
-
-/*
- * Destroy event loop and clear all memory, loop can be inited again
- */
-#define async_loop_destroy() async_loop_destroy_()
-
-/*
- * Init event loop
- */
-#define async_loop_init() async_loop_init_()
-
-/*
  * Create a new coro
  */
 #define async_new(call_func, args, locals) async_new_coro_((call_func), (args), sizeof(locals))
@@ -218,7 +215,7 @@ struct astate {
 /*
  * Create task from coro
  */
-#define async_create_task(coro) async_loop_add_task_(coro)
+#define async_create_task(coro) async_get_event_loop()->add_task(coro)
 
 /*
  * Get async_error code for current execution state. Can be used to check for errors after fawait()
@@ -243,6 +240,19 @@ struct astate {
             _async_p->_next = NULL;                                                                                 \
         }                                                                                                           \
     } else _async_p->err = ASYNC_ERR_NOMEM
+
+#define ASYNC_WRAP(async_callback, state, args_size, locals_t) \
+    (state) = async_new(async_callback, NULL, locals_t);       \
+    if (!(state)) { return NULL; }                             \
+    if (args_size) {                                           \
+        (state)->args = async_alloc_((state), args_size);      \
+        if (!state->args) {                                    \
+            async_free_coro_(state);                           \
+            return NULL;                                       \
+        }                                                      \
+    }                                                          \
+    (void) 0
+
 
 /*
  * Allocate memory that'll be freed automatically after async function ends.
@@ -286,23 +296,16 @@ struct astate *async_sleep(time_t delay);
  */
 struct astate *async_wait_for(struct astate *state, time_t timeout);
 
+struct async_event_loop *async_get_event_loop(void);
+
+void async_set_event_loop(struct async_event_loop *);
+
 /*
  * Internal functions, use with caution! (At least read the code)
  */
-
 struct astate *async_new_coro_(AsyncCallback child_f, void *args, size_t stack_size);
 
-struct astate *async_loop_add_task_(struct astate *state);
-
-struct astate **async_loop_add_tasks_(size_t n, struct astate **states);
-
-void async_loop_init_(void);
-
-void async_loop_run_forever_(void);
-
-void async_loop_run_until_complete_(struct astate *main);
-
-void async_loop_destroy_(void);
+void async_free_coro_(struct astate *state);
 
 void *async_alloc_(struct astate *state, size_t size);
 
