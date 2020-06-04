@@ -215,7 +215,12 @@ struct async_event_loop {
 /*
  * Create task from coro
  */
-#define async_create_task(coro) async_get_event_loop()->add_task(coro)
+#define async_create_task(coro) (async_get_event_loop()->add_task(coro))
+
+/*
+ * Create tasks from array of states
+ */
+#define async_create_tasks(n, coros) (async_get_event_loop()->add_tasks(n, coros))
 
 /*
  * Get async_error code for current execution state. Can be used to check for errors after fawait()

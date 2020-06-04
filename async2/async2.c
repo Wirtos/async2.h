@@ -306,7 +306,7 @@ struct astate *async_vgather(size_t n, ...) {
         stack->arr_coros[i] = va_arg(v_args, struct astate *);
     }
 
-    if (!async_loop_add_tasks_(n, stack->arr_coros)) {
+    if (!async_create_tasks(n, stack->arr_coros)) {
         for (i = 0; i < n; i++) {
             if (stack->arr_coros[i] != NULL) {
                 STATE_FREE(stack->arr_coros[i]);
@@ -335,7 +335,7 @@ struct astate *async_gather(size_t n, struct astate **states) {
     stack = state->locals;
     stack->n_coros = n;
     stack->arr_coros = states;
-    if (!async_loop_add_tasks_(n, states)) {
+    if (!async_create_tasks(n, states)) {
         STATE_FREE(state);
         return NULL;
     }
