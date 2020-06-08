@@ -291,6 +291,7 @@ struct astate *async_vgather(size_t n, ...) {
     stack = state->locals;
     async_arr_init(&stack->coros);
     if (!async_arr_reserve(&stack->coros, n) || !async_free_later_(state, stack->coros.data)) {
+        async_arr_destroy(&stack->coros);
         STATE_FREE(state);
         return NULL;
     }
@@ -427,7 +428,7 @@ int async_free_(struct astate *state, void *mem) {
 }
 
 int async_free_later_(struct astate *state, void *mem) {
-    if (!async_arr_push(&state->_allocs, mem)) {
+    if (mem == NULL || !async_arr_push(&state->_allocs, mem)) {
         return 0;
     }
     return 1;
