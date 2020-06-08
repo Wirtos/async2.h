@@ -105,19 +105,18 @@ struct astate {
 struct async_event_loop {
     async_arr_(struct astate *) events_queue;
 
-    void (*init)();
+    void (*init)(void);
 
-    void (*destroy)();
+    void (*destroy)(void);
 
-    struct astate *(*add_task)(struct astate *);
+    struct astate *(*add_task)(struct astate *state);
 
     struct astate **(*add_tasks)(size_t n, struct astate **states);
 
     void (*run_forever)(void);
 
-    void (*run_until_complete)(struct astate *);
+    void (*run_until_complete)(struct astate * main_state);
 };
-
 
 #define ASYNC_INCREF(coro) coro->_ref_cnt++
 
@@ -246,17 +245,20 @@ struct async_event_loop {
         }                                                                                                           \
     } else _async_p->err = ASYNC_ERR_NOMEM
 
-#define ASYNC_WRAP(async_callback, state, args_size, locals_t) \
-    (state) = async_new(async_callback, NULL, locals_t);       \
-    if (!(state)) { return NULL; }                             \
-    if (args_size) {                                           \
-        (state)->args = async_alloc_((state), args_size);      \
-        if (!state->args) {                                    \
-            async_free_coro_(state);                           \
-            return NULL;                                       \
-        }                                                      \
-    }                                                          \
-    (void) 0
+/*
+ * Initial preparation for adapter functions like async_sleep
+ */
+#define ASYNC_PREPARE(async_callback, state, args_size, locals_t, cancel_f) \
+    (state) = async_new(async_callback, NULL, locals_t);                    \
+    if (!(state)) { return NULL; }                                          \
+    if (args_size) {                                                        \
+        (state)->args = async_alloc_((state), args_size);                   \
+        if (!state->args) {                                                 \
+            async_free_coro_(state);                                        \
+            return NULL;                                                    \
+        }                                                                   \
+        async_set_on_cancel(state, cancel_f);                               \
+    }(void) 0
 
 
 /*
@@ -266,6 +268,8 @@ struct async_event_loop {
 #define async_alloc(size) async_alloc_(_async_p, size)
 
 #define async_free(ptr) async_free_(_async_p, ptr)
+
+#define async_free_later(ptr) async_free_later_(_async_p, ptr)
 
 /*
  * Set function to be executed on function cancellation once. Can be used to free memory and finish some tasks.
@@ -315,5 +319,7 @@ void async_free_coro_(struct astate *state);
 void *async_alloc_(struct astate *state, size_t size);
 
 int async_free_(struct astate *state, void *mem);
+
+int async_free_later_(struct astate *state, void *mem);
 
 #endif
