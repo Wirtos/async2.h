@@ -63,9 +63,7 @@ typedef enum ASYNC_EVT {
 } async;
 
 typedef enum ASYNC_ERR {
-    ASYNC_OK = 0,
-    ASYNC_ERR_CANCELLED = 42,
-    ASYNC_ERR_NOMEM = 12
+    ASYNC_OK = 0, ASYNC_ERR_CANCELLED = 42, ASYNC_ERR_NOMEM = 12
 } async_error;
 
 
@@ -100,10 +98,13 @@ struct astate {
     async_arr_(void*) _allocs; /* array of memory blocks allocated by async_alloc and managed by the event loop */
     size_t _ref_cnt; /* number of functions still using this state. 1 by default, because state owns itself. If number of references is 0, the state becomes invalid and will be freed by the event loop as soon as possible */
     struct astate *_next; /* child state used by fawait */
+
+    #ifdef ASYNC_DEBUG
+    const char *debug_taskname;
+    #endif
 };
 
 struct async_event_loop {
-    async_arr_(struct astate *) events_queue;
 
     void (*init)(void);
 
@@ -115,8 +116,13 @@ struct async_event_loop {
 
     void (*run_forever)(void);
 
-    void (*run_until_complete)(struct astate * main_state);
+    void (*run_until_complete)(struct astate *main_state);
+
+    async_arr_(struct astate *) events_queue;
+    async_arr_(size_t) vacant_queue;
 };
+
+extern struct async_event_loop *async_default_event_loop;
 
 #define ASYNC_INCREF(coro) coro->_ref_cnt++
 
@@ -137,8 +143,8 @@ struct async_event_loop {
 #ifdef ASYNC_DEBUG
 #define async_begin(k)                          \
     struct astate *_async_p = k;                \
-    fprintf(stderr, "Entered %s\n", __func__);    \
-    switch(_async_p->_async_k) { default:
+    fprintf(stderr, "Entered %s\n", __func__);  \
+    switch(_async_p->_async_k) { default: _async_p->debug_taskname = __func__
 #else
 #define async_begin(k)                      \
     struct astate *_async_p = k;            \
@@ -229,35 +235,33 @@ struct async_event_loop {
 /*
  * Create task and wait until the coro succeeds. Resets async_errno and sets it.
  */
-#define fawait(coro)                                                                                                \
-    _async_p->_next = async_create_task(coro);                                                                      \
-    if(_async_p->_next != NULL){                                                                                    \
-        _async_p->err = ASYNC_OK;                                                                                   \
-        ASYNC_INCREF(_async_p->_next);                                                                              \
-        _async_p->_async_k = __LINE__; /* fall through */ case __LINE__:                                            \
-        if (!async_done(_async_p->_next)) {                                                                         \
-            return ASYNC_CONT;                                                                                      \
-        }                                                                                                           \
-        else {                                                                                                      \
-            ASYNC_DECREF(_async_p->_next);                                                                          \
-            _async_p->err = _async_p->_next->err;                                                                   \
-            _async_p->_next = NULL;                                                                                 \
-        }                                                                                                           \
-    } else _async_p->err = ASYNC_ERR_NOMEM
+#define fawait(coro)                           \
+    _async_p->_next = async_create_task(coro); \
+    if (_async_p->_next) {                     \
+        ASYNC_INCREF(_async_p->_next);         \
+        await(async_done(_async_p->_next));    \
+        ASYNC_DECREF(_async_p->_next);         \
+        _async_p->err = _async_p->_next->err;  \
+        _async_p->_next = NULL;                \
+    } else                                     \
+        _async_p->err = ASYNC_ERR_NOMEM
 
 /*
  * Initial preparation for adapter functions like async_sleep
  */
+#define ASYNC_PREPARE_NOARGS(async_callback, state, locals_t, cancel_f) \
+    (state) = async_new(async_callback, NULL, locals_t);                \
+    if (!(state)) { return NULL; }                                      \
+    async_set_on_cancel(state, cancel_f)
+
 #define ASYNC_PREPARE(async_callback, state, args_size, locals_t, cancel_f) \
-    (state) = async_new(async_callback, NULL, locals_t);                    \
-    if (!(state)) { return NULL; }                                          \
+    ASYNC_PREPARE_NOARGS(async_callback, state, locals_t, cancel_f);        \
     if (args_size) {                                                        \
         (state)->args = async_alloc_((state), args_size);                   \
         if (!state->args) {                                                 \
             async_free_coro_(state);                                        \
             return NULL;                                                    \
         }                                                                   \
-        async_set_on_cancel(state, cancel_f);                               \
     }(void) 0
 
 
@@ -303,11 +307,11 @@ struct astate *async_sleep(time_t delay);
 /*
  * Execute function in `timeout` seconds or cancel it if timeout was reached.
  */
-struct astate *async_wait_for(struct astate *state, time_t timeout);
+struct astate *async_wait_for(struct astate *child, time_t timeout);
 
 struct async_event_loop *async_get_event_loop(void);
 
-void async_set_event_loop(struct async_event_loop);
+void async_set_event_loop(struct async_event_loop *);
 
 /*
  * Internal functions, use with caution! (At least read the code)
@@ -315,6 +319,8 @@ void async_set_event_loop(struct async_event_loop);
 struct astate *async_new_coro_(AsyncCallback child_f, void *args, size_t stack_size);
 
 void async_free_coro_(struct astate *state);
+
+void async_free_coros_(size_t n, struct astate **states);
 
 void *async_alloc_(struct astate *state, size_t size);
 
