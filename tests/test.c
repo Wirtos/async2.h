@@ -81,11 +81,7 @@ static async gatherable(s_astate *state) {
     stack->states[2] = async_new(add, res, ASYNC_NOLOCALS);
     fawait(async_gather(3, stack->states));
     if (async_errno == ASYNC_ERR_NOMEM) {
-        for (i = 0; i < 3; i++) {
-            if (stack->states[i]) {
-                async_free_coro_(stack->states[i]);
-            }
-        }
+       async_free_coros_(3, stack->states);
     }
     fawait(async_vgather(3,
                          async_new(add, res, ASYNC_NOLOCALS),
@@ -102,6 +98,13 @@ static async cycle_counter(s_astate *state) {
         async_yield;
     }
     async_end;
+}
+
+s_astate *count_cycles(int *res){
+    s_astate *state;
+    ASYNC_PREPARE_NOARGS(cycle_counter, state, ASYNC_NOLOCALS, NULL);
+    state->args = res;
+    return state;
 }
 
 static async yielder(s_astate *state) {
@@ -197,11 +200,11 @@ int main(void) {
         time_t st;
         int i;
         test_section("loop->run_until_complete");
+        loop->init();
         for (i = 0; i < 10; i++) {
             async_create_task(async_sleep(1000));
         }
         time(&st);
-        loop->init();
         loop->run_until_complete(async_sleep(0));
         test_assert(difftime(time(NULL), st) <= 1);
         loop->destroy();
@@ -221,7 +224,7 @@ int main(void) {
         struct astate *state = async_new(yielder, NULL, ASYNC_NOLOCALS);
         test_section("async_yield + loop cycles");
         loop->init();
-        async_create_task(async_new(cycle_counter, &n_event_loop_cycles, ASYNC_NOLOCALS));
+        async_create_task(count_cycles(&n_event_loop_cycles));
         loop->run_until_complete(state);
         test_assert(n_event_loop_cycles == 3);
         loop->destroy();
