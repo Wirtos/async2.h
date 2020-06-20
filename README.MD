@@ -30,7 +30,7 @@ Function/Macro|Description
 *loop->loop_run_until_complete(main_coro)*|Block and run event loop until main_coro completes. Can be called any number of times preserving uncompleted tasks state
 *async_begin(state)*|Mark the beginning of an async subroutine
 *async_end*|Mark the end of an async subroutine
-*fawait(coro)*|Add task to the event loop and block progress until coro is done executing. Sets async_errno.
+*fawait(coro)*|Add task to the event loop and block progress until `coro` is done executing. Sets async_errno: ASYNC_ERR_CANCELLED if `coro` task was cancelled, ASYNC_ERR_NOMEM and frees `coro` if there's not enough memory to create task, ASYNC_OK otherwise.
 *async_yield*|Yield execution until it's invoked again
 *await(cond)*|Block progress until `cond` is true
 *await_while(cond)*|Block progress while `cond` is true
@@ -41,7 +41,7 @@ Function/Macro|Description
 *async_wait_for(struct astate \* coro, time_t timeout)*| Wait for the coro to complete with a timeout. Cancel it otherwise.
 *async_alloc(size)* | Allocate memory automatically managed by event loop
 *async_free(ptr)* | Free `ptr` allocated with async_alloc without waiting for event loop to do it for you. Can be useful in long running tasks, but malloc with cancel function is preferable and faster anyway.
-*async_create_task(coro)*|Add task to the event loop without blocking current progress
+*async_create_task(coro)*|Add task to the event loop without blocking current progress, returns NULL and frees coro on failure
 *async_create_tasks(n, coros)*|Add n tasks from array of states to the event loop without blocking current progress, does nothing if one of the states is NULL or if there's not enough memory to add them 
 *async_cancel(coro)*| Cancels current coro. Note, that if coro operates some custom memory not allocated with async_alloc it'll result in a memory leak.
 *async_cancelled(coro)*|Returns true if coro was cancelled, false otherwise
@@ -50,13 +50,17 @@ Function/Macro|Description
 *async_exit*|Terminate the current async subroutine
 *async_done(state)*|Returns true if async subroutine has completed execution, otherwise false
 *async_errno*|Macro that expands to the value of the type `async_err` of the current async function
+*async_free_later_(struct astate \*state, void \*mem)*|returns true if memory block was successfully queued and will be freed later by the event loop
+*async_free_coro_(struct astate \*)*|free state memory, should be never used manually until dealing with states manually or when creating custom event loop
+*async_free_coros_(size_t n, struct astate \*\*)*|free n coros in array ignoring NULL pointers
 ## Ownership system
 ### (handled automatically by fawait/wait_for/gather coros, manual use only)
 Function|Description
 --------|-----------
 *ASYNC_INCREF(coro)*|Mark coro as "currently in use", so it won't be deleted automatically. Must be followed by ASYNC_DECREF somewhere else in the async function/cancel function". 
 *ASYNC_DECREF(coro)*|Mark coro as "isn't used anymore". Note, that it won't be deleted immediately if other functions used INCREF on this coro too
-
+*ASYNC_PREPARE_NOARGS(async_callback, state, locals_t, cancel_f)*|Prepare adapter function without allocating memory for args
+*ASYNC_PREPARE(async_callback, state, args_size, locals_t, cancel_f)*|Prepare adapter function
 # Practices 
 - How can I return value/values from the function?
 
