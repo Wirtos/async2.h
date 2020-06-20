@@ -145,9 +145,10 @@ int main(void) {
     loop = async_get_event_loop();
     {
         struct astate *arr[3] = {async_sleep(0), async_sleep(0), async_sleep(0)};
-        struct astate **a_res = async_create_tasks(3, arr);
+        struct astate **a_res;
         test_section("add_task[s]");
         loop->init();
+        a_res = async_create_tasks(3, arr);
         test_assert(!!async_create_task(async_sleep(0)));
         test_assert(a_res != NULL);
         if (!a_res) {
