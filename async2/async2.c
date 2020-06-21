@@ -419,16 +419,15 @@ struct astate *async_gather(size_t n, struct astate **states) {
 }
 
 typedef struct {
-    time_t end;
-    time_t sec;
+    time_t sec, end;
 } sleeper_stack;
 
 
 static async async_sleeper(struct astate *state) {
     sleeper_stack *locals = state->locals;
     async_begin(state);
-            locals->end = time(NULL) + locals->sec;
-            await_while(difftime(locals->end, time(NULL)) > 0);
+            locals->end = time(NULL);
+            await_while(difftime(time(NULL), locals->end) < locals->sec);
     async_end;
 }
 
@@ -468,8 +467,8 @@ static async async_waiter(struct astate *state) {
                 async_errno = ASYNC_ERR_NOMEM;
                 async_exit;
             }
-            locals->end = time(NULL) + locals->sec;
-            await_while(!async_done(child) && difftime(locals->end, time(NULL)) > 0);
+            locals->end = time(NULL);
+            await_while(!async_done(child) && difftime(locals->end, time(NULL)) < locals->sec);
             if (!async_done(child)) {
                 async_errno = ASYNC_ERR_CANCELLED;
                 async_cancel(child);
