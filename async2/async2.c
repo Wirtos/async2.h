@@ -198,14 +198,14 @@ static struct async_event_loop *event_loop = &async_standard_event_loop_;
     }                       \
     if (all_vacant) break
 
-#define ASYNC_LOOP_RUNNER_BODY                                     \
-    ASYNC_LOOP_BODY_BEGIN                                          \
-    ASYNC_LOOP_RUNNER_BLOCK_NOREFS                                 \
-    ASYNC_LOOP_RUNNER_BLOCK_CANCELLED                              \
-    else if (!async_done(state)) {                                 \
-        /* Nothing special to do with this function, let it run */ \
-        state->_func(state);                                       \
-    }                                                              \
+#define ASYNC_LOOP_RUNNER_BODY                                                    \
+    ASYNC_LOOP_BODY_BEGIN                                                         \
+    ASYNC_LOOP_RUNNER_BLOCK_NOREFS                                                \
+    ASYNC_LOOP_RUNNER_BLOCK_CANCELLED                                             \
+    else if (!async_done(state) && (!state->_next || async_done(state->_next))) { \
+        /* Nothing special to do with this function, let it run */                \
+        state->_func(state);                                                      \
+    }                                                                             \
     ASYNC_LOOP_BODY_END
 
 
