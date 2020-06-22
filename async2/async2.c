@@ -468,7 +468,7 @@ static async async_waiter(struct astate *state) {
                 async_exit;
             }
             locals->end = time(NULL);
-            await_while(!async_done(child) && difftime(locals->end, time(NULL)) < locals->sec);
+            await_while(!async_done(child) && difftime(time(NULL), locals->end) < locals->sec);
             if (!async_done(child)) {
                 async_errno = ASYNC_ERR_CANCELLED;
                 async_cancel(child);

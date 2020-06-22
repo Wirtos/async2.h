@@ -74,7 +74,6 @@ typedef struct {
 static async gatherable(s_astate *state) {
     gatherable_stack *stack = state->locals;
     int *res = state->args;
-    int i;
     async_begin(state);
     stack->states[0] = async_new(add, res, ASYNC_NOLOCALS);
     stack->states[1] = async_new(add, res, ASYNC_NOLOCALS);
@@ -121,7 +120,7 @@ static async waiter(s_astate *state) {
     async_begin(state);
     fawait(async_wait_for(async_sleep(1000), 0));
     *res = async_errno;
-    fawait(async_wait_for(async_sleep(0), 10));
+    fawait(async_wait_for(async_sleep(2), 10));
     async_end;
 }
 
