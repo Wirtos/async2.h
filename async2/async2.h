@@ -302,12 +302,12 @@ struct astate *async_gather(size_t n, struct astate **states);
 /*
  * Block for `delay` seconds
  */
-struct astate *async_sleep(time_t delay);
+struct astate *async_sleep(double delay);
 
 /*
  * Execute function in `timeout` seconds or cancel it if timeout was reached.
  */
-struct astate *async_wait_for(struct astate *child, time_t timeout);
+struct astate *async_wait_for(struct astate *child, double timeout);
 
 struct async_event_loop *async_get_event_loop(void);
 
