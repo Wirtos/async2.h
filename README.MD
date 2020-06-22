@@ -6,7 +6,7 @@ this is an async/await/fawait/event loop implementation for C based on Duff's de
 # Features
 
 1. It's 100% pure, portable C.
-2. It uses 96 bytes of memory per state, but grants you seamless nesting abilities, errors and stack management.
+2. It uses 96 bytes of memory per state, but grants you seamless nesting abilities, error handling and stack management.
 3. It's not dependent on an OS.
 4. It's a bit simpler to understand than other implementations as async state/stack management is fully handled by the lib.
 5. You can't preserve local variables across function calls, but the library provides a way to store them persistently (see [practices](#practices))
@@ -110,6 +110,7 @@ async amain(s_astate *state) {
 
 int main(void) {
     struct async_event_loop *loop = async_get_event_loop();
+    loop->init();
     async_create_task(async_new(amain, "task 1", struct amain_stack)); /* Allocate enough memory to hold locals of type struct amain_stack */
     async_create_task(async_new(amain, "task 2", struct amain_stack));
     loop->run_forever();
