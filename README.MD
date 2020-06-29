@@ -74,7 +74,9 @@ async f(state){
 }
 ...
 int a;
-fawait(async_new(f, &a, ASYNC_NOLOCALS));
+fawait(async_new(f, &a, ASYNC_NOLOCALS)){ 
+    printf("error %s happened\n", async_perror(async_errno));
+}
 ```
 
 We can replace int * with, say, struct * if we want multiple return values of different types. Any type pointer is fine.
@@ -117,11 +119,14 @@ int main(void) {
     loop->destroy();
 }
 ```
-## Always check async_errno after every fawait, that way you'll be sure that coroutine executed correctly:
+## Code inside braces only executes when coroutine returns with non-zero async_errno code
 ```c
-fawait(async_func(10));
-if(async_errno == ASYNC_ERR_NOMEM){
-    /* Something went really wrong... */
+fawait(async_func(10)){
+    if(async_errno == ASYNC_ERR_NOMEM){
+        /* Handle memory error... */
+    }
+} else{
+    /* Coroutine finished without errors */
 }
 ```
 ---
@@ -129,12 +134,14 @@ if(async_errno == ASYNC_ERR_NOMEM){
 struct astate *task = async_create_task(coro());
 ASYNC_XINCREF(task); /* Acquire ownership for task so it won't be immediately deleted after completion */
 /* Do stuff... */
-await(async_done(task));
-if(task->err != ASYNC_OK){
-    /* Handle task error */
+if(task){
+    await(async_done(task));
+    if(task->err != ASYNC_OK){
+        /* Handle task error manually */
+    }
 }
 
-ASYNC_DECREF(task);
+ASYNC_XDECREF(task);
 ```
 ## Don't create libraries with async_new usage!
 - Always wrap coroutines in such way as asyncio_sleep or asyncio_wait_for so their use will be very simple(no need to use async_new on them as they prepare), such way you can provide custom async functions that can take any arguments, but return type still will be limited to astate \*.
@@ -166,5 +173,5 @@ await(global == 42);
 ...
 longjump(var);
 ```
-That means no way you can use C exceptions libraries like exceptions4c to wrap fawait or await or yield calls, use async_errno instead.
+That means no way you can use C exceptions libraries like exceptions4c to wrap fawait or await or yield calls, use async_errno and fawait braces instead.
 
