@@ -49,7 +49,8 @@ static async errno_produce(s_astate *state) {
     struct astate *child_state = async_new(cancellable, NULL, ASYNC_NOLOCALS);
     if (child_state)
         async_cancel(child_state);
-    fawait(child_state);
+    fawait(child_state){
+    }
     *err = async_errno;
     async_end;
 }
@@ -78,14 +79,17 @@ static async gatherable(s_astate *state) {
     stack->states[0] = async_new(add, res, ASYNC_NOLOCALS);
     stack->states[1] = async_new(add, res, ASYNC_NOLOCALS);
     stack->states[2] = async_new(add, res, ASYNC_NOLOCALS);
-    fawait(async_gather(3, stack->states));
-    if (async_errno == ASYNC_ERR_NOMEM) {
-       async_free_coros_(3, stack->states);
+    fawait(async_gather(3, stack->states)) {
+        if (async_errno == ASYNC_ERR_NOMEM) {
+            async_free_coros_(3, stack->states);
+        }
     }
     fawait(async_vgather(3,
                          async_new(add, res, ASYNC_NOLOCALS),
                          async_new(add, res, ASYNC_NOLOCALS),
-                         async_new(add, res, ASYNC_NOLOCALS)));
+                         async_new(add, res, ASYNC_NOLOCALS))
+                         ){
+    }
     async_end;
 }
 
@@ -118,14 +122,16 @@ static async yielder(s_astate *state) {
 static async waiter(s_astate *state) {
     int *res = state->args;
     async_begin(state);
-    fawait(async_wait_for(async_sleep(1000), 0));
+    fawait(async_wait_for(async_sleep(1000), 0)){
+    }
     *res = async_errno;
-    fawait(async_wait_for(async_sleep(2), 10));
+    fawait(async_wait_for(async_sleep(2), 10)){
+    }
     async_end;
 }
 
 #define container_of(ptr, type, member) \
-    (type *) ((char *) (ptr) -offsetof(type, member))
+    (type *) ((char *) (ptr) - offsetof(type, member))
 
 typedef struct {
     struct async_event_loop _base;
