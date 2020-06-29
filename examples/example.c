@@ -3,6 +3,8 @@
 #include <assert.h>
 #include "async2.h"
 
+#define panic(message) (fputs(message, stderr), exit(EXIT_FAILURE))
+
 struct f3_args {
     int res1;
     int res2;
@@ -49,15 +51,24 @@ static async f1(s_astate *state) {
     async_begin(state);
             for (locals->i = 0; locals->i < 3; locals->i++) {
                 printf("f0 %s %d\n", text, (locals->i) + 1);
-                fawait(async_new(f3, &locals->res, int)); /* Create new coro from f3 and wait until it completes. */
+                fawait(async_new(f3, &locals->res, int)) {
+                    panic("f3 failed");
+                } /* Create new coro from f3 and wait until it completes. */
                 printf("Result: %d - %d\n", locals->res.res1, locals->res.res2);
             }
-            fawait(async_vgather(2, async_new(f4, NULL, ASYNC_NOLOCALS), async_new(f4, NULL, ASYNC_NOLOCALS)));
-            assert(async_errno == ASYNC_OK);
-            fawait(async_sleep(1));
-            assert(async_errno == ASYNC_OK);
-            fawait(async_wait_for(async_sleep(1000000), 1));
-            assert(async_errno == ASYNC_ERR_CANCELLED);
+            fawait(async_vgather(2, async_new(f4, NULL, ASYNC_NOLOCALS), async_new(f4, NULL, ASYNC_NOLOCALS))) {
+                panic("vgather failed");
+            }
+            fawait(async_sleep(0)) {
+                panic("sleep failed");
+            }
+            fawait(async_wait_for(async_sleep(1000000), 0)) {
+                assert(async_errno == ASYNC_ERR_CANCELLED);
+                async_errno = 0;
+            } else {
+                panic("Error that should never happen");
+            }
+
             locals->mem = async_alloc(512); /* This memory will be freed automatically after function end*/
     async_end;
 }
