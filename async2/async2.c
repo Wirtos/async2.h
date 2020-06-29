@@ -531,3 +531,16 @@ struct async_event_loop *async_get_event_loop(void) {
 void async_set_event_loop(struct async_event_loop *loop) {
     event_loop = loop;
 }
+
+const char *async_perror(async_error err) {
+    switch (err) {
+        case ASYNC_OK:
+            return "OK";
+        case ASYNC_ERR_NOMEM:
+            return "MEMORY ALLOCATION ERROR";
+        case ASYNC_ERR_CANCELLED:
+            return "COROUTINE WAS CANCELLED";
+        default:
+            return "UNKNOWN ERROR";
+    }
+}

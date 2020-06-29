@@ -235,16 +235,17 @@ extern struct async_event_loop *async_default_event_loop;
 /*
  * Create task and wait until the coro succeeds. Resets async_errno and sets it.
  */
-#define fawait(coro)                           \
-    _async_p->_next = async_create_task(coro); \
-    if (_async_p->_next) {                     \
-        ASYNC_INCREF(_async_p->_next);         \
-        await(async_done(_async_p->_next));    \
-        ASYNC_DECREF(_async_p->_next);         \
-        _async_p->err = _async_p->_next->err;  \
-        _async_p->_next = NULL;                \
-    } else                                     \
-        _async_p->err = ASYNC_ERR_NOMEM
+
+#define fawait(coro)                               \
+        _async_p->_next = async_create_task(coro); \
+        if (_async_p->_next) {                     \
+            ASYNC_INCREF(_async_p->_next);         \
+            await(async_done(_async_p->_next));    \
+            ASYNC_DECREF(_async_p->_next);         \
+            async_errno = _async_p->_next->err;    \
+            _async_p->_next = NULL;                \
+        } else { async_errno = ASYNC_ERR_NOMEM; }  \
+        if(async_errno != ASYNC_OK)
 
 /*
  * Initial preparation for adapter functions like async_sleep
@@ -327,5 +328,7 @@ void *async_alloc_(struct astate *state, size_t size);
 int async_free_(struct astate *state, void *mem);
 
 int async_free_later_(struct astate *state, void *mem);
+
+const char *async_perror(async_error err);
 
 #endif
