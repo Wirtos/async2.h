@@ -18,7 +18,7 @@ Types|Description
 __AsyncCallback__| pointer to an async function with signature: `async funcname(struct astate *state)`
 __AsyncCancelCallback__| pointer to a cancel function with signature: `void funcname(struct astate *state)`
 __ASYNC\_NOLOCALS__|Type to imply empty function stack(locals) when creating new coro with `async_new`.
-__async_error__|Enum type with async errors
+__async_error__|Enum type with async errors: ASYNC_OK, ASYNC_ERR_NOMEM, ASYNC_ERR_CANCELLED
 
 Function/Macro|Description
 --------|-----------
@@ -34,25 +34,26 @@ Function/Macro|Description
 *async_yield*|Yield execution until it's invoked again
 *await(cond)*|Block progress until `cond` is true
 *await_while(cond)*|Block progress while `cond` is true
-*async_new(func, args, locals)*|Returns a new coro from function(function must follow AsyncCallback signature) with args and stack memory capable to hold type passed to locals: int, struct, array, custom type or ASYNC_NOLOCALS if you don't need stack memory at all
-*async_gather(n_coros, struct astate\*\* array_of_coros)*|Gathers together few coros to run them in parallel into single coro and returns it
-*async_vgather(n_coros, ...)*|Variadic version of async_gather, expects coros to be passed directly
-*async_sleep(time_t delay)*|Block execution for `delay` seconds
-*async_wait_for(struct astate \* coro, time_t timeout)*| Wait for the coro to complete with a timeout. Cancel it otherwise.
-*async_alloc(size)* | Allocate memory automatically managed by event loop
-*async_free(ptr)* | Free `ptr` allocated with async_alloc without waiting for event loop to do it for you. Can be useful in long running tasks, but malloc with cancel function is preferable and faster anyway.
-*async_create_task(coro)*|Add task to the event loop without blocking current progress, returns NULL and frees coro on failure
-*async_create_tasks(n, coros)*|Add n tasks from array of states to the event loop without blocking current progress, does nothing if one of the states is NULL or if there's not enough memory to add them 
+*struct astate \*async_new(func, args, locals)*|Returns a new coro from function (function must follow AsyncCallback signature) with args and stack memory capable to hold type passed to locals: int, struct, array, custom type or ASYNC_NOLOCALS if you don't need stack memory at all
+*struct astate \*async_gather(n_coros, struct astate\*\* array_of_coros)*|Gathers together few coros to run them in parallel into single coro and returns it. If gather() is cancelled, all submitted coros (that have not completed yet) are also cancelled. 
+*struct astate \*async_vgather(n_coros, ...)*|Variadic version of async_gather, expects coros to be passed directly (no need to cleanup them on failure)
+*struct astate \*async_sleep(time_t delay)*|Block execution for `delay` seconds
+*struct astate \*async_wait_for(struct astate \* coro, time_t timeout)*| Wait for the coro to complete with a timeout. Cancel it otherwise and set async_erro to ASYNC_ERR_CANCELLED.
+*void \*async_alloc(size)* | Allocate memory automatically managed by event loop
+*void async_free(ptr)* | Free `ptr` allocated with async_alloc without waiting for event loop to do it for you. Can be useful in long running tasks, but malloc with cancel function is preferable and faster anyway.
+*struct astate \*async_create_task(coro)*|Add task to the event loop without blocking current progress, returns NULL and frees coro on failure
+*struct astate \*\*async_create_tasks(n, coros)*|Add n tasks from array of states to the event loop without blocking current progress, does nothing and returns NULL if one of the coros is NULL or if there's not enough memory to add them 
 *async_cancel(coro)*| Cancels current coro. Note, that if coro operates some custom memory not allocated with async_alloc it'll result in a memory leak.
-*async_cancelled(coro)*|Returns true if coro was cancelled, false otherwise
-*async_on_cancel(cancel_func)*|Set cancel function to be called on cancel for current async functions. cancel_func must follow AsyncCancelCallback type signature
-*async_set_on_cancel(coro, cancel_func)*|Same as function above, but takes coro instead of using current function
+*int async_cancelled(coro)*|Returns true if coro was cancelled, false otherwise
+*void async_on_cancel(cancel_func)*|Set cancel function to be called on cancel for current async functions. cancel_func must follow AsyncCancelCallback type signature
+*void async_set_on_cancel(coro, cancel_func)*|Same as function above, but takes coro instead of using current function
 *async_exit*|Terminate the current async subroutine
 *async_done(state)*|Returns true if async subroutine has completed execution, otherwise false
 *async_errno*|Macro that expands to the value of the type `async_err` of the current async function
-*async_free_later_(struct astate \*state, void \*mem)*|returns true if memory block was successfully queued and will be freed later by the event loop
-*async_free_coro_(struct astate \*)*|free state memory, should be never used manually until dealing with states manually or when creating custom event loop
-*async_free_coros_(size_t n, struct astate \*\*)*|free n coros in array ignoring NULL pointers
+*const char \*async_perror(async_err err)*|Returns string representation of async_errno value
+*int async_free_later_(struct astate \*state, void \*mem)*|returns true if memory block was successfully queued and will be freed later by the event loop
+*void async_free_coro_(struct astate \*)*|free coro's memory, should be never used manually until dealing with states manually or when creating custom event loop
+*void async_free_coros_(size_t n, struct astate \*\*)*|free n coros in array ignoring NULL pointers
 ## Ownership system
 ### (handled automatically by fawait/wait_for/gather coros, manual use only)
 Function|Description
