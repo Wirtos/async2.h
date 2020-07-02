@@ -137,7 +137,7 @@ static struct async_event_loop *event_loop = &async_standard_event_loop_;
 #define ASYNC_LOOP_HEAD   \
     size_t i;             \
     struct astate *state; \
-    int all_vacant /* bool used by ASYNC_BODY_END so if all states are NULL'ed we will break from parent loop */
+    int all_vacant = 0 /* bool used by ASYNC_BODY_END so if all states are NULL'ed we will break from parent loop */
 
 #define ASYNC_LOOP_RUNNER_BLOCK_NOREFS                         \
     if (state->_ref_cnt == 0) {                                \
@@ -195,8 +195,7 @@ static struct async_event_loop *event_loop = &async_standard_event_loop_;
 
 /* Parent while loop breaks if all array elements are vacant (NULL'ed) */
 #define ASYNC_LOOP_BODY_END \
-    }                       \
-    if (all_vacant) break
+    }(void)0
 
 #define ASYNC_LOOP_RUNNER_BODY                                                    \
     ASYNC_LOOP_BODY_BEGIN                                                         \
@@ -222,7 +221,7 @@ static struct async_event_loop *event_loop = &async_standard_event_loop_;
 
 static void async_loop_run_forever_(void) {
     ASYNC_LOOP_HEAD;
-    while (event_loop->events_queue.length > 0) {
+    while (!all_vacant && event_loop->events_queue.length > 0) {
         ASYNC_LOOP_RUNNER_BODY;
     }
 }
@@ -248,7 +247,7 @@ static void async_loop_init_(void) {
 
 static void async_loop_destroy_(void) {
     ASYNC_LOOP_HEAD;
-    while (event_loop->events_queue.length > 0) {
+    while (!all_vacant && event_loop->events_queue.length > 0) {
         ASYNC_LOOP_DESTRUCTOR_BODY;
     }
     async_arr_destroy(&event_loop->events_queue);
@@ -359,21 +358,11 @@ struct astate *async_vgather(size_t n, ...) {
     struct astate *state;
     size_t i;
 
-    state = async_new(async_gatherer, NULL, gathered_stack);
-    if (state == NULL) {
-        va_start(v_args, n);
-        for (i = 0; i < n; i++) {
-            state = va_arg(v_args, struct astate *);
-            if (state) STATE_FREE(state);
-        }
-        va_end(v_args);
-        return NULL;
-    }
+    ASYNC_PREPARE_NOARGS(async_gatherer, state, gathered_stack, async_gatherer_cancel, fail);
 
     stack = state->locals;
     async_arr_init(&stack->coros);
     if (!async_arr_reserve(&stack->coros, n) || !async_free_later_(state, stack->coros.data)) {
-        async_arr_destroy(&stack->coros);
         goto fail;
     }
 
@@ -384,17 +373,27 @@ struct astate *async_vgather(size_t n, ...) {
     va_end(v_args);
     stack->coros.length = n;
     if (!async_create_tasks(n, stack->coros.data)) {
-        for (i = 0; i < n; i++) {
-            if (stack->coros.data[i]) STATE_FREE(stack->coros.data[i]);
-        }
-        fail:
-    STATE_FREE(state);
-        return NULL;
+       goto fail;
     }
     for (i = 0; i < n; i++) {
         ASYNC_INCREF(stack->coros.data[i]);
     }
     return state;
+
+    fail:
+    if (state) {
+        async_arr_destroy(&stack->coros);
+        STATE_FREE(state);
+    }
+    va_start(v_args, n);
+    for (i = 0; i < n; i++) {
+        state = va_arg(v_args, struct astate *);
+        if (state) STATE_FREE(state);
+    }
+    va_end(v_args);
+    return NULL;
+
+
 }
 
 
@@ -403,7 +402,7 @@ struct astate *async_gather(size_t n, struct astate **states) {
     gathered_stack *stack;
     size_t i;
 
-    ASYNC_PREPARE_NOARGS(async_gatherer, state, gathered_stack, async_gatherer_cancel);
+    ASYNC_PREPARE_NOARGS(async_gatherer, state, gathered_stack, async_gatherer_cancel, fail);
     stack = state->locals;
     stack->coros.capacity = n;
     stack->coros.length = n;
@@ -416,6 +415,8 @@ struct astate *async_gather(size_t n, struct astate **states) {
         ASYNC_INCREF(stack->coros.data[i]);
     }
     return state;
+    fail:
+    return NULL;
 }
 
 typedef struct {
@@ -436,10 +437,12 @@ struct astate *async_sleep(double delay) {
     struct astate *state;
     sleeper_stack *stack;
 
-    ASYNC_PREPARE_NOARGS(async_sleeper, state, sleeper_stack, NULL);
+    ASYNC_PREPARE_NOARGS(async_sleeper, state, sleeper_stack, NULL, fail);
     stack = state->locals; /* Yet another predefined locals trick for mere optimisation, use async_alloc_ in real adapter functions instead. */
     stack->sec = delay;
     return state;
+    fail:
+    return NULL;
 }
 
 typedef struct {
@@ -483,12 +486,15 @@ struct astate *async_wait_for(struct astate *child, double timeout) {
     struct astate *state;
     waiter_stack *stack;
     if (child == NULL) { return NULL; }
-    ASYNC_PREPARE_NOARGS(async_waiter, state, waiter_stack, async_waiter_cancel);
+    ASYNC_PREPARE_NOARGS(async_waiter, state, waiter_stack, async_waiter_cancel, fail);
     stack = state->locals; /* Predefine locals. This trick can be used to create friendly methods. */
     state->args = child;
     stack->sec = timeout;
     ASYNC_INCREF(child);
     return state;
+    fail:
+    STATE_FREE(child);
+    return NULL;
 }
 
 void *async_alloc_(struct astate *state, size_t size) {

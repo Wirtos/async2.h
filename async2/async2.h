@@ -250,18 +250,18 @@ extern struct async_event_loop *async_default_event_loop;
 /*
  * Initial preparation for adapter functions like async_sleep
  */
-#define ASYNC_PREPARE_NOARGS(async_callback, state, locals_t, cancel_f) \
+#define ASYNC_PREPARE_NOARGS(async_callback, state, locals_t, cancel_f, err_label) \
     (state) = async_new(async_callback, NULL, locals_t);                \
-    if (!(state)) { return NULL; }                                      \
+    if (!(state)) { goto err_label; }                                      \
     async_set_on_cancel(state, cancel_f)
 
-#define ASYNC_PREPARE(async_callback, state, args_size, locals_t, cancel_f) \
+#define ASYNC_PREPARE(async_callback, state, args_size, locals_t, cancel_f, err_label) \
     ASYNC_PREPARE_NOARGS(async_callback, state, locals_t, cancel_f);        \
     if (args_size) {                                                        \
         (state)->args = async_alloc_((state), args_size);                   \
         if (!state->args) {                                                 \
             async_free_coro_(state);                                        \
-            return NULL;                                                    \
+            goto err_label;                                                 \
         }                                                                   \
     }(void) 0
 
