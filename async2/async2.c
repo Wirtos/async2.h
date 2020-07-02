@@ -167,7 +167,7 @@ static struct async_event_loop *event_loop = &async_standard_event_loop_;
     }
 
 #define ASYNC_LOOP_RUNNER_BLOCK_CANCELLED                               \
-    else if (state->err != ASYNC_ERR_CANCELLED && state->must_cancel) { \
+    else if (state->err != ASYNC_ECANCELLED && state->must_cancel) {    \
         if (!async_done(state)) {                                       \
             ASYNC_DECREF(state);                                        \
             if (state->_cancel != NULL) {                               \
@@ -178,7 +178,7 @@ static struct async_event_loop *event_loop = &async_standard_event_loop_;
             ASYNC_DECREF(state->_next);                                 \
             async_cancel(state->_next);                                 \
         }                                                               \
-        state->err = ASYNC_ERR_CANCELLED;                               \
+        state->err = ASYNC_ECANCELLED;                                  \
         state->_async_k = ASYNC_DONE;                                   \
     }
 
@@ -244,7 +244,6 @@ static void async_loop_init_(void) {
 
 static void async_loop_destroy_(void) {
     ASYNC_LOOP_HEAD;
-    struct async_event_loop *el = event_loop;
     while (event_loop->events_queue.length > 0 && event_loop->events_queue.length > event_loop->vacant_queue.length) {
         ASYNC_LOOP_DESTRUCTOR_BODY;
     }
@@ -467,13 +466,13 @@ static async async_waiter(struct astate *state) {
     async_begin(state);
             if (!async_create_task(child)) {
                 state->args = NULL;
-                async_errno = ASYNC_ERR_NOMEM;
+                async_errno = ASYNC_ENOMEM;
                 async_exit;
             }
             locals->start = time(NULL);
             await_while(!async_done(child) && difftime(time(NULL), locals->start) < locals->sec);
             if (!async_done(child)) {
-                async_errno = ASYNC_ERR_CANCELLED;
+                async_errno = ASYNC_ECANCELLED;
                 async_cancel(child);
             }
             ASYNC_DECREF(child);
@@ -540,10 +539,12 @@ const char *async_perror(async_error err) {
     switch (err) {
         case ASYNC_OK:
             return "OK";
-        case ASYNC_ERR_NOMEM:
+        case ASYNC_ENOMEM:
             return "MEMORY ALLOCATION ERROR";
-        case ASYNC_ERR_CANCELLED:
+        case ASYNC_ECANCELLED:
             return "COROUTINE WAS CANCELLED";
+        case ASYNC_EINVALID_STATE:
+            return "INVALID STATE WAS PASSED TO COROUTINE";
         default:
             return "UNKNOWN ERROR";
     }

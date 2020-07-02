@@ -80,7 +80,7 @@ static async gatherable(s_astate *state) {
     stack->states[1] = async_new(add, res, ASYNC_NOLOCALS);
     stack->states[2] = async_new(add, res, ASYNC_NOLOCALS);
     fawait(async_gather(3, stack->states)) {
-        if (async_errno == ASYNC_ERR_NOMEM) {
+        if (async_errno == ASYNC_ENOMEM) {
             async_free_coros_(3, stack->states);
         }
     }
@@ -126,13 +126,13 @@ static async waiter(s_astate *state) {
     s_astate *st;
     async_begin(state);
     fawait(async_wait_for((st = async_sleep(1000)), 0)){
-        if (async_errno == ASYNC_ERR_NOMEM){
+        if (async_errno == ASYNC_ENOMEM){
             async_free_coro_(st);
         }
     }
     *res = async_errno;
     fawait(async_wait_for(st = async_sleep(2), 10)){
-        if (async_errno == ASYNC_ERR_NOMEM){
+        if (async_errno == ASYNC_ENOMEM){
             async_free_coro_(st);
         }
     }
@@ -196,7 +196,7 @@ int main(void) {
         test_section("async_errno");
         loop->init();
         loop->run_until_complete(state);
-        test_assert(err == ASYNC_ERR_CANCELLED);
+        test_assert(err == ASYNC_ECANCELLED);
         loop->destroy();
     }
 
@@ -229,7 +229,7 @@ int main(void) {
         test_section("async_wait_for");
         loop->init();
         loop->run_until_complete(async_new(waiter, &err, ASYNC_NOLOCALS));
-        test_assert(err == ASYNC_ERR_CANCELLED);
+        test_assert(err == ASYNC_ECANCELLED);
         loop->destroy();
     }
 

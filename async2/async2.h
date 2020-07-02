@@ -59,11 +59,11 @@ SOFTWARE.
  * The async computation status
  */
 typedef enum ASYNC_EVT {
-    ASYNC_INIT = 0, ASYNC_CONT = 1, ASYNC_DONE = 2
+    ASYNC_INIT, ASYNC_CONT, ASYNC_DONE
 } async;
 
 typedef enum ASYNC_ERR {
-    ASYNC_OK = 0, ASYNC_ERR_CANCELLED = 42, ASYNC_ERR_NOMEM = 12
+    ASYNC_OK = 0, ASYNC_ENOMEM = 12, ASYNC_ECANCELLED = 42, ASYNC_EINVALID_STATE
 } async_error;
 
 
@@ -141,34 +141,45 @@ extern struct async_event_loop *async_default_event_loop;
  * ASYNC_DEBUG mode is c99+ only.
  */
 #ifdef ASYNC_DEBUG
-#define async_begin(k)                          \
-    struct astate *_async_p = k;                \
-    fprintf(stderr, "Entered %s\n", __func__);  \
-    switch(_async_p->_async_k) { default: _async_p->debug_taskname = __func__
+#define async_begin(k)                                     \
+    struct astate *_async_p = k;                           \
+    fprintf(stderr, "<ADEBUG> Entered '%s'\n", __func__);  \
+    switch(_async_p->_async_k) {                           \
+    case ASYNC_INIT:                                       \
+        fprintf(stderr, "<ADEBUG> Begin '%s'\n", __func__);\
+        _async_p->debug_taskname = __func__
 #else
 #define async_begin(k)                      \
     struct astate *_async_p = k;            \
-    switch(_async_p->_async_k) { default:
+    switch(_async_p->_async_k) {            \
+    case ASYNC_INIT:
 #endif
 
 /*
  * Mark the end of a async subroutine
  */
 #ifdef ASYNC_DEBUG
-#define async_end                            \
-    _async_p->_async_k=ASYNC_DONE;           \
-    ASYNC_DECREF(_async_p);                  \
-    fprintf(stderr, "Exited %s\n", __func__);\
-    /* fall through */                       \
-    case ASYNC_DONE:                         \
-    return ASYNC_DONE; } (void)0
+#define async_end                                                                                        \
+    _async_p->_async_k=ASYNC_DONE;                                                                       \
+    ASYNC_DECREF(_async_p);                                                                              \
+    fprintf(stderr, "<ADEBUG> Ended '%s'\n", __func__);                                                  \
+    /* fall through */                                                                                   \
+    case ASYNC_DONE:                                                                                     \
+        return ASYNC_DONE;                                                                               \
+    default:                                                                                             \
+        async_errno = ASYNC_EINVALID_STATE;                                                              \
+        fprintf(stderr, "<ADEBUG> WARNING: %s: %s(%d)\n", async_perror(async_errno), __FILE__, __LINE__);\
+        return ASYNC_DONE;} (void) 0
 #else
 #define async_end                           \
-    _async_p->_async_k=ASYNC_DONE;          \
+    _async_p->_async_k = ASYNC_DONE;        \
     ASYNC_DECREF(_async_p);                 \
     /* fall through */                      \
     case ASYNC_DONE:                        \
-    return ASYNC_DONE; } (void)0
+        return ASYNC_DONE;                  \
+    default:                                \
+        async_errno = ASYNC_EINVALID_STATE; \
+        return ASYNC_DONE;} (void) 0
 #endif
 
 /*
@@ -177,10 +188,15 @@ extern struct async_event_loop *async_default_event_loop;
  * Continuation state is now callee-saved like protothreads which avoids
  * duplicate writes from the caller-saved design.
  */
+#ifdef ASYNC_DEBUG
+#define await_while(cond)                                                                                            \
+    _async_p->_async_k = __LINE__; /* fall through */  case __LINE__:                                                \
+    if (cond) return (fprintf(stderr, "<ADEBUG> Awaited in '%s' %s(%d)\n", __func__, __FILE__, __LINE__), ASYNC_CONT)
+#else
 #define await_while(cond)                                             \
     _async_p->_async_k = __LINE__; /* fall through */  case __LINE__: \
     if (cond) return ASYNC_CONT
-
+#endif
 /*
  * Wait until the condition succeeds
  */
@@ -189,13 +205,19 @@ extern struct async_event_loop *async_default_event_loop;
 /*
  * Yield execution
  */
+#ifdef ASYNC_DEBUG
+#define async_yield _async_p->_async_k = __LINE__; fprintf(stderr, "<ADEBUG> Yielded in '%s' %s(%d)\n", __func__, __FILE__, __LINE__); return ASYNC_CONT; /* fall through */ case __LINE__: (void)0
+#else
 #define async_yield _async_p->_async_k = __LINE__; return ASYNC_CONT; /* fall through */ case __LINE__: (void)0
-
+#endif
 /*
  * Exit the current async subroutine
  */
+#ifdef ASYNC_DEBUG
+#define async_exit _async_p->_async_k = ASYNC_DONE; ASYNC_DECREF(_async_p); fprintf(stderr, "<ADEBUG> Exited from '%s' %s(%d)\n", __func__, __FILE__, __LINE__); return ASYNC_DONE
+#else
 #define async_exit _async_p->_async_k = ASYNC_DONE; ASYNC_DECREF(_async_p); return ASYNC_DONE
-
+#endif
 /*
  * Cancels running coroutine
  */
@@ -244,25 +266,25 @@ extern struct async_event_loop *async_default_event_loop;
             ASYNC_DECREF(_async_p->_next);         \
             async_errno = _async_p->_next->err;    \
             _async_p->_next = NULL;                \
-        } else { async_errno = ASYNC_ERR_NOMEM; }  \
+        } else { async_errno = ASYNC_ENOMEM; }     \
         if(async_errno != ASYNC_OK)
 
 /*
  * Initial preparation for adapter functions like async_sleep
  */
 #define ASYNC_PREPARE_NOARGS(async_callback, state, locals_t, cancel_f, err_label) \
-    (state) = async_new(async_callback, NULL, locals_t);                \
-    if (!(state)) { goto err_label; }                                      \
+    (state) = async_new(async_callback, NULL, locals_t);                           \
+    if (!(state)) goto err_label;                                                  \
     async_set_on_cancel(state, cancel_f)
 
 #define ASYNC_PREPARE(async_callback, state, args_size, locals_t, cancel_f, err_label) \
-    ASYNC_PREPARE_NOARGS(async_callback, state, locals_t, cancel_f);        \
-    if (args_size) {                                                        \
-        (state)->args = async_alloc_((state), args_size);                   \
-        if (!state->args) {                                                 \
-            async_free_coro_(state);                                        \
-            goto err_label;                                                 \
-        }                                                                   \
+    ASYNC_PREPARE_NOARGS(async_callback, state, locals_t, cancel_f);                   \
+    if (args_size) {                                                                   \
+        (state)->args = async_alloc_((state), args_size);                              \
+        if (!state->args) {                                                            \
+            async_free_coro_(state);                                                   \
+            goto err_label;                                                            \
+        }                                                                              \
     }(void) 0
 
 

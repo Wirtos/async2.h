@@ -18,7 +18,7 @@ Types|Description
 __AsyncCallback__| pointer to an async function with signature: `async funcname(struct astate *state)`
 __AsyncCancelCallback__| pointer to a cancel function with signature: `void funcname(struct astate *state)`
 __ASYNC\_NOLOCALS__|Type to imply empty function stack(locals) when creating new coro with `async_new`.
-__async_error__|Enum type with async errors: ASYNC_OK, ASYNC_ERR_NOMEM, ASYNC_ERR_CANCELLED
+__async_error__|Enum type with async errors: ASYNC_OK, ASYNC_ENOMEM, ASYNC_ECANCELLED, ASYNC_EINVALID_STATE
 
 Function/Macro|Description
 --------|-----------
@@ -30,7 +30,7 @@ Function/Macro|Description
 *loop->loop_run_until_complete(main_coro)*|Block and run event loop until main_coro completes. Can be called any number of times preserving uncompleted tasks state
 *async_begin(state)*|Mark the beginning of an async subroutine
 *async_end*|Mark the end of an async subroutine
-*fawait(coro)*|Add task to the event loop and block progress until `coro` is done executing. Sets async_errno: ASYNC_ERR_CANCELLED if `coro` task was cancelled, ASYNC_ERR_NOMEM and frees `coro` if there's not enough memory to create task, ASYNC_OK otherwise.
+*fawait(coro)*|Add task to the event loop and block progress until `coro` is done executing. Sets async_errno: ASYNC_ECANCELLED if `coro` task was cancelled, ASYNC_ENOMEM and frees `coro` if there's not enough memory to create task, ASYNC_OK otherwise.
 *async_yield*|Yield execution until it's invoked again
 *await(cond)*|Block progress until `cond` is true
 *await_while(cond)*|Block progress while `cond` is true
@@ -38,7 +38,7 @@ Function/Macro|Description
 *struct astate \*async_gather(n_coros, struct astate\*\* array_of_coros)*|Gathers together few coros to run them in parallel into single coro and returns it. If gather() is cancelled, all submitted coros (that have not completed yet) are also cancelled. 
 *struct astate \*async_vgather(n_coros, ...)*|Variadic version of async_gather, expects coros to be passed directly (no need to cleanup them on failure)
 *struct astate \*async_sleep(time_t delay)*|Block execution for `delay` seconds
-*struct astate \*async_wait_for(struct astate \* coro, time_t timeout)*| Wait for the coro to complete with a timeout. Cancel it otherwise and set async_erro to ASYNC_ERR_CANCELLED.
+*struct astate \*async_wait_for(struct astate \* coro, time_t timeout)*| Wait for the coro to complete with a timeout. Cancel it otherwise and set async_erro to ASYNC_ECANCELLED.
 *void \*async_alloc(size)* | Allocate memory automatically managed by event loop
 *void async_free(ptr)* | Free `ptr` allocated with async_alloc without waiting for event loop to do it for you. Can be useful in long running tasks, but malloc with cancel function is preferable and faster anyway.
 *struct astate \*async_create_task(coro)*|Add task to the event loop without blocking current progress, returns NULL and frees coro on failure
@@ -60,8 +60,8 @@ Function|Description
 --------|-----------
 *ASYNC_INCREF(coro)*|Mark coro as "currently in use", so it won't be deleted automatically. Must be followed by ASYNC_DECREF somewhere else in the async function/cancel function". 
 *ASYNC_DECREF(coro)*|Mark coro as "isn't used anymore". Note, that it won't be deleted immediately if other functions used INCREF on this coro too
-*ASYNC_PREPARE_NOARGS(async_callback, state, locals_t, cancel_f)*|Prepare adapter function without allocating memory for args
-*ASYNC_PREPARE(async_callback, state, args_size, locals_t, cancel_f)*|Prepare adapter function
+*ASYNC_PREPARE_NOARGS(async_callback, state, locals_t, cancel_f, err_label)*|Prepare adapter function without allocating memory for args, in case of faulty allocation goto err_label;
+*ASYNC_PREPARE(async_callback, state, args_size, locals_t, cancel_f, err_label)*|Prepare adapter function
 # Practices 
 - How can I return value/values from the function?
 
@@ -123,7 +123,7 @@ int main(void) {
 ## Code inside braces only executes when coroutine returns with non-zero async_errno code
 ```c
 fawait(async_func(10)){
-    if(async_errno == ASYNC_ERR_NOMEM){
+    if(async_errno == ASYNC_ENOMEM){
         /* Handle memory error... */
     }
 } else{

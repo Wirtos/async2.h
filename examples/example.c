@@ -63,7 +63,7 @@ static async f1(s_astate *state) {
                 panic("sleep failed");
             }
             fawait(async_wait_for(async_sleep(1000000), 0)) {
-                assert(async_errno == ASYNC_ERR_CANCELLED);
+                assert(async_errno == ASYNC_ECANCELLED);
                 async_errno = 0;
             } else {
                 panic("Error that should never happen");
