@@ -136,8 +136,7 @@ static struct async_event_loop *event_loop = &async_standard_event_loop_;
 
 #define ASYNC_LOOP_HEAD   \
     size_t i;             \
-    struct astate *state; \
-    int all_vacant = 0 /* bool used by ASYNC_BODY_END so if all states are NULL'ed we will break from parent loop */
+    struct astate *state  \
 
 #define ASYNC_LOOP_RUNNER_BLOCK_NOREFS                         \
     if (state->_ref_cnt == 0) {                                \
@@ -164,6 +163,7 @@ static struct async_event_loop *event_loop = &async_standard_event_loop_;
         }                                                   \
         STATE_FREE(state);                                  \
         event_loop->events_queue.data[i] = NULL;            \
+        event_loop->vacant_queue.length++;                  \
     }
 
 #define ASYNC_LOOP_RUNNER_BLOCK_CANCELLED                               \
@@ -183,13 +183,10 @@ static struct async_event_loop *event_loop = &async_standard_event_loop_;
     }
 
 #define ASYNC_LOOP_BODY_BEGIN                               \
-    all_vacant = 1;                                         \
     for (i = 0; i < event_loop->events_queue.length; i++) { \
         state = event_loop->events_queue.data[i];           \
         if (state == NULL) {                                \
             continue;                                       \
-        } else if (all_vacant) {                            \
-            all_vacant = 0;                                 \
         }
 
 
@@ -221,7 +218,7 @@ static struct async_event_loop *event_loop = &async_standard_event_loop_;
 
 static void async_loop_run_forever_(void) {
     ASYNC_LOOP_HEAD;
-    while (!all_vacant && event_loop->events_queue.length > 0) {
+    while (event_loop->events_queue.length > 0 && event_loop->events_queue.length > event_loop->vacant_queue.length) {
         ASYNC_LOOP_RUNNER_BODY;
     }
 }
@@ -247,7 +244,8 @@ static void async_loop_init_(void) {
 
 static void async_loop_destroy_(void) {
     ASYNC_LOOP_HEAD;
-    while (!all_vacant && event_loop->events_queue.length > 0) {
+    struct async_event_loop *el = event_loop;
+    while (event_loop->events_queue.length > 0 && event_loop->events_queue.length > event_loop->vacant_queue.length) {
         ASYNC_LOOP_DESTRUCTOR_BODY;
     }
     async_arr_destroy(&event_loop->events_queue);
