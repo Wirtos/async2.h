@@ -105,9 +105,11 @@ static async cycle_counter(s_astate *state) {
 
 s_astate *count_cycles(int *res){
     s_astate *state;
-    ASYNC_PREPARE_NOARGS(cycle_counter, state, ASYNC_NOLOCALS, NULL);
+    ASYNC_PREPARE_NOARGS(cycle_counter, state, ASYNC_NOLOCALS, NULL, fail);
     state->args = res;
     return state;
+    fail:
+    return NULL;
 }
 
 static async yielder(s_astate *state) {
@@ -121,11 +123,18 @@ static async yielder(s_astate *state) {
 
 static async waiter(s_astate *state) {
     int *res = state->args;
+    s_astate *st;
     async_begin(state);
-    fawait(async_wait_for(async_sleep(1000), 0)){
+    fawait(async_wait_for((st = async_sleep(1000)), 0)){
+        if (async_errno == ASYNC_ERR_NOMEM){
+            async_free_coro_(st);
+        }
     }
     *res = async_errno;
-    fawait(async_wait_for(async_sleep(2), 10)){
+    fawait(async_wait_for(st = async_sleep(2), 10)){
+        if (async_errno == ASYNC_ERR_NOMEM){
+            async_free_coro_(st);
+        }
     }
     async_end;
 }
