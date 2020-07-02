@@ -152,7 +152,7 @@ extern struct async_event_loop *async_default_event_loop;
 #define async_begin(k)                      \
     struct astate *_async_p = k;            \
     switch(_async_p->_async_k) {            \
-    case ASYNC_INIT:
+    case ASYNC_INIT: (void)0
 #endif
 
 /*
