@@ -82,6 +82,14 @@ typedef async (*AsyncCallback)(struct astate *);
 
 typedef void (*AsyncCancelCallback)(struct astate *);
 
+/*
+ * Figures out proper offset from struct beginning to T_b
+ * in order to allocate struct capable storing both Types a and b in one go
+ * and prevent unaligned memory access
+ */
+#define ASYNC_COMPUTE_OFFSET_(T_a, T_b)\
+  offsetof(struct{T_a a; T_b b;}, b)
+
 #define async_arr_(T)\
   struct { T *data; size_t length, capacity; }
 
@@ -237,7 +245,8 @@ extern struct async_event_loop *async_default_event_loop;
 /*
  * Create a new coro
  */
-#define async_new(call_func, args, locals) async_new_coro_((call_func), (args), sizeof(locals))
+#define async_new(call_func, args, locals_t)\
+  async_new_coro_((call_func), (args), sizeof(locals_t), ASYNC_COMPUTE_OFFSET_(struct astate, locals_t))
 
 /*
  * Create task from coro
@@ -339,7 +348,7 @@ void async_set_event_loop(struct async_event_loop *);
 /*
  * Internal functions, use with caution! (At least read the code)
  */
-struct astate *async_new_coro_(AsyncCallback child_f, void *args, size_t stack_size);
+struct astate *async_new_coro_(AsyncCallback child_f, void *args, size_t stack_size, size_t stack_offset);
 
 void async_free_coro_(struct astate *state);
 

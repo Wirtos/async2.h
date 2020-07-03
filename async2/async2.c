@@ -125,7 +125,6 @@ static struct async_event_loop *event_loop = &async_standard_event_loop_;
 /* Free astate, its allocs and invalidate it completely */
 #define STATE_FREE(state)                                         \
     {                                                             \
-        free((state)->locals);                                    \
         while ((state)->_allocs.length--) {                       \
             free((state)->_allocs.data[(state)->_allocs.length]); \
         }                                                         \
@@ -282,16 +281,14 @@ static struct astate **async_loop_add_tasks_(size_t n, struct astate **states) {
     return states;
 }
 
-struct astate *async_new_coro_(AsyncCallback child_f, void *args, size_t stack_size) {
+struct astate *async_new_coro_(AsyncCallback child_f, void *args, size_t stack_size, size_t stack_offset) {
     struct astate *state;
+    size_t padding;
 
-    state = calloc(1, sizeof(*state));
+    padding = stack_offset - sizeof(*state);
+    state = calloc(1, sizeof(*state) + padding + stack_size);
     if (state == NULL) { return NULL; }
-    state->locals = calloc(1, stack_size);
-    if (state->locals == NULL) {
-        free(state);
-        return NULL;
-    }
+    state->locals = ((char *)state) + stack_offset;
     state->_func = child_f;
     state->args = args;
     state->_ref_cnt = 1; /* State has 1 reference set as function "owns" itself until exited or cancelled */
