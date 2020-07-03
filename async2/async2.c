@@ -20,9 +20,9 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
  */
 #include "async2.h"
-#include <stdarg.h>
-#include <stdlib.h>
-#include <string.h>
+#include <stdarg.h> /* va_start, va_end, va_arg, va_list */
+#include <stdlib.h> /* ma|re|calloc, free*/
+#include <string.h> /* memset, memmove*/
 
 /*
  * event loop member functions declaration
@@ -532,7 +532,7 @@ void async_set_event_loop(struct async_event_loop *loop) {
     event_loop = loop;
 }
 
-const char *async_perror(async_error err) {
+const char *async_strerror(async_error err) {
     switch (err) {
         case ASYNC_OK:
             return "OK";

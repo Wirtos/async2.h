@@ -50,7 +50,7 @@ Function/Macro|Description
 *async_exit*|Terminate the current async subroutine
 *async_done(state)*|Returns true if async subroutine has completed execution, otherwise false
 *async_errno*|Macro that expands to the value of the type `async_err` of the current async function
-*const char \*async_perror(async_err err)*|Returns string representation of async_errno value
+*const char \*async_strerror(async_err err)*|Returns string representation of async_errno value
 *int async_free_later_(struct astate \*state, void \*mem)*|returns true if memory block was successfully queued and will be freed later by the event loop
 *void async_free_coro_(struct astate \*)*|free coro's memory, should be never used manually until dealing with states manually or when creating custom event loop
 *void async_free_coros_(size_t n, struct astate \*\*)*|free n coros in array ignoring NULL pointers
@@ -76,7 +76,7 @@ async f(state){
 ...
 int a;
 fawait(async_new(f, &a, ASYNC_NONE)){ 
-    printf("error %s happened\n", async_perror(async_errno));
+    printf("error %s happened\n", async_strerror(async_errno));
 }
 ```
 

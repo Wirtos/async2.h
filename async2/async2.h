@@ -48,11 +48,11 @@ SOFTWARE.
  *    These must be changed into non-blocking calls that test a condition.
  */
 
-#include <stddef.h>
-#include <time.h>
+#include <stddef.h> /* NULL, offsetof */
+#include <time.h> /* time_t */
 
 #ifdef ASYNC_DEBUG
-    #include <stdio.h>
+    #include <stdio.h> /* fprintf, stderr */
 #endif
 
 /*
@@ -176,7 +176,7 @@ extern struct async_event_loop *async_default_event_loop;
         return ASYNC_DONE;                                                                               \
     default:                                                                                             \
         async_errno = ASYNC_EINVALID_STATE;                                                              \
-        fprintf(stderr, "<ADEBUG> WARNING: %s: %s(%d)\n", async_perror(async_errno), __FILE__, __LINE__);\
+        fprintf(stderr, "<ADEBUG> WARNING: %s: %s(%d)\n", async_strerror(async_errno), __FILE__, __LINE__);\
         return ASYNC_DONE;} (void) 0
 #else
 #define async_end                           \
@@ -360,6 +360,6 @@ int async_free_(struct astate *state, void *mem);
 
 int async_free_later_(struct astate *state, void *mem);
 
-const char *async_perror(async_error err);
+const char *async_strerror(async_error err);
 
 #endif
