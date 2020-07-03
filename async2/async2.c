@@ -309,7 +309,7 @@ void async_free_coros_(size_t n, struct astate **states) {
 }
 
 typedef struct {
-    async_arr_(struct astate *) coros;
+    async_arr_t(struct astate *) coros;
 } gathered_stack;
 
 static void async_gatherer_cancel(struct astate *state) {

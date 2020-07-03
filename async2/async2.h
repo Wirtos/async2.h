@@ -70,9 +70,9 @@ typedef enum ASYNC_ERR {
 /*
  * Core async type to imply empty locals when creating new coro
  */
-typedef char ASYNC_NOLOCALS;
+typedef char ASYNC_NONE;
 
-typedef struct astate s_astate;
+typedef struct astate *s_astate;
 
 
 /*
@@ -87,10 +87,10 @@ typedef void (*AsyncCancelCallback)(struct astate *);
  * in order to allocate struct capable storing both Types a and b in one go
  * and prevent unaligned memory access
  */
-#define ASYNC_COMPUTE_OFFSET_(T_a, T_b)\
+#define _ASYNC_COMPUTE_OFFSET(T_a, T_b)\
   offsetof(struct{T_a a; T_b b;}, b)
 
-#define async_arr_(T)\
+#define async_arr_t(T)\
   struct { T *data; size_t length, capacity; }
 
 struct astate {
@@ -103,7 +103,7 @@ struct astate {
     long int _async_k; /* current execution state. ASYNC_EVT if < 3 and number of line in the function otherwise (means that state(or its function) is still running) */
     AsyncCallback _func; /* function to be called by the event loop */
     AsyncCancelCallback _cancel; /* function to be called in case of cancelling state, can be NULL */
-    async_arr_(void*) _allocs; /* array of memory blocks allocated by async_alloc and managed by the event loop */
+    async_arr_t(void*) _allocs; /* array of memory blocks allocated by async_alloc and managed by the event loop */
     size_t _ref_cnt; /* number of functions still using this state. 1 by default, because state owns itself. If number of references is 0, the state becomes invalid and will be freed by the event loop as soon as possible */
     struct astate *_next; /* child state used by fawait */
 
@@ -126,8 +126,8 @@ struct async_event_loop {
 
     void (*run_until_complete)(struct astate *main_state);
 
-    async_arr_(struct astate *) events_queue;
-    async_arr_(size_t) vacant_queue;
+    async_arr_t(struct astate *) events_queue;
+    async_arr_t(size_t) vacant_queue;
 };
 
 extern struct async_event_loop *async_default_event_loop;
@@ -246,7 +246,7 @@ extern struct async_event_loop *async_default_event_loop;
  * Create a new coro
  */
 #define async_new(call_func, args, locals_t)\
-  async_new_coro_((call_func), (args), sizeof(locals_t), ASYNC_COMPUTE_OFFSET_(struct astate, locals_t))
+  async_new_coro_((call_func), (args), sizeof(locals_t), _ASYNC_COMPUTE_OFFSET(struct astate, locals_t))
 
 /*
  * Create task from coro

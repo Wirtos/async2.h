@@ -34,7 +34,7 @@ Function/Macro|Description
 *async_yield*|Yield execution until it's invoked again
 *await(cond)*|Block progress until `cond` is true
 *await_while(cond)*|Block progress while `cond` is true
-*struct astate \*async_new(func, args, locals)*|Returns a new coro from function (function must follow AsyncCallback signature) with args and stack memory capable to hold type passed to locals: int, struct, array, custom type or ASYNC_NOLOCALS if you don't need stack memory at all
+*struct astate \*async_new(func, args, locals)*|Returns a new coro from function (function must follow AsyncCallback signature) with args and stack memory capable to hold type passed to locals: int, struct, array, custom type or ASYNC_NONE if you don't need stack memory at all
 *struct astate \*async_gather(n_coros, struct astate\*\* array_of_coros)*|Gathers together few coros to run them in parallel into single coro and returns it. If gather() is cancelled, all submitted coros (that have not completed yet) are also cancelled. 
 *struct astate \*async_vgather(n_coros, ...)*|Variadic version of async_gather, expects coros to be passed directly (no need to cleanup them on failure)
 *struct astate \*async_sleep(time_t delay)*|Block execution for `delay` seconds
@@ -75,7 +75,7 @@ async f(state){
 }
 ...
 int a;
-fawait(async_new(f, &a, ASYNC_NOLOCALS)){ 
+fawait(async_new(f, &a, ASYNC_NONE)){ 
     printf("error %s happened\n", async_perror(async_errno));
 }
 ```
@@ -97,7 +97,7 @@ struct amain_stack {
     int i;
 };
 
-async amain(s_astate *state) {
+async amain(s_astate state) {
     struct amain_stack *locals = state->locals;
     char *args = state->args;
     async_begin(state);

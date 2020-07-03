@@ -34,7 +34,7 @@
 int pass_count = 0;
 int fail_count = 0;
 
-static async cancellable(s_astate *state) {
+static async cancellable(s_astate state) {
     int *res = state->args;
     async_begin(state);
     if (res != NULL) {
@@ -43,10 +43,10 @@ static async cancellable(s_astate *state) {
     async_end;
 }
 
-static async errno_produce(s_astate *state) {
+static async errno_produce(s_astate state) {
     int *err = state->args;
     async_begin(state);
-    struct astate *child_state = async_new(cancellable, NULL, ASYNC_NOLOCALS);
+    struct astate *child_state = async_new(cancellable, NULL, ASYNC_NONE);
     if (child_state)
         async_cancel(child_state);
     fawait(child_state){
@@ -55,12 +55,12 @@ static async errno_produce(s_astate *state) {
     async_end;
 }
 
-static void cancellable_c(s_astate *state) {
+static void cancellable_c(s_astate state) {
     int *res = state->args;
     *res = 42;
 }
 
-static async add(s_astate *state) {
+static async add(s_astate state) {
     int *res = state->args;
     async_begin(state);
     async_yield;
@@ -72,13 +72,13 @@ typedef struct {
     struct astate *states[3];
 } gatherable_stack;
 
-static async gatherable(s_astate *state) {
+static async gatherable(s_astate state) {
     gatherable_stack *stack = state->locals;
     int *res = state->args;
     async_begin(state);
-    stack->states[0] = async_new(add, res, ASYNC_NOLOCALS);
-    stack->states[1] = async_new(add, res, ASYNC_NOLOCALS);
-    stack->states[2] = async_new(add, res, ASYNC_NOLOCALS);
+    stack->states[0] = async_new(add, res, ASYNC_NONE);
+    stack->states[1] = async_new(add, res, ASYNC_NONE);
+    stack->states[2] = async_new(add, res, ASYNC_NONE);
     fawait(async_gather(3, stack->states)) {
         if (async_errno == ASYNC_ENOMEM) {
             async_free_coros_(3, stack->states);
@@ -93,7 +93,7 @@ static async gatherable(s_astate *state) {
     async_end;
 }
 
-static async cycle_counter(s_astate *state) {
+static async cycle_counter(s_astate state) {
     int *res = state->args;
     async_begin(state);
     while (1) {
@@ -103,16 +103,16 @@ static async cycle_counter(s_astate *state) {
     async_end;
 }
 
-s_astate *count_cycles(int *res){
-    s_astate *state;
-    ASYNC_PREPARE_NOARGS(cycle_counter, state, ASYNC_NOLOCALS, NULL, fail);
+s_astate count_cycles(int *res){
+    s_astate state;
+    ASYNC_PREPARE_NOARGS(cycle_counter, state, ASYNC_NONE, NULL, fail);
     state->args = res;
     return state;
     fail:
     return NULL;
 }
 
-static async yielder(s_astate *state) {
+static async yielder(s_astate state) {
     async_begin(state);
     async_yield;
     async_yield;
@@ -121,9 +121,9 @@ static async yielder(s_astate *state) {
 }
 
 
-static async waiter(s_astate *state) {
+static async waiter(s_astate state) {
     int *res = state->args;
-    s_astate *st;
+    s_astate st;
     async_begin(state);
     fawait(async_wait_for((st = async_sleep(1000)), 0)){
         if (async_errno == ASYNC_ENOMEM){
@@ -148,9 +148,9 @@ typedef struct {
 } better_loop;
 
 
-static s_astate *my_addtask(struct astate *state) {
+static s_astate my_addtask(struct astate *state) {
     better_loop *bloop = container_of(async_get_event_loop(), better_loop, _base);
-    s_astate *res = async_default_event_loop->add_task(state);
+    s_astate res = async_default_event_loop->add_task(state);
     if (res) bloop->add_counter++;
     return res;
 }
@@ -192,7 +192,7 @@ int main(void) {
 
     {
         int err = 0;
-        struct astate *state = async_new(errno_produce, &err, ASYNC_NOLOCALS);
+        struct astate *state = async_new(errno_produce, &err, ASYNC_NONE);
         test_section("async_errno");
         loop->init();
         loop->run_until_complete(state);
@@ -228,14 +228,14 @@ int main(void) {
         int err = 0;
         test_section("async_wait_for");
         loop->init();
-        loop->run_until_complete(async_new(waiter, &err, ASYNC_NOLOCALS));
+        loop->run_until_complete(async_new(waiter, &err, ASYNC_NONE));
         test_assert(err == ASYNC_ECANCELLED);
         loop->destroy();
     }
 
     {
         int n_event_loop_cycles = 0;
-        struct astate *state = async_new(yielder, NULL, ASYNC_NOLOCALS);
+        struct astate *state = async_new(yielder, NULL, ASYNC_NONE);
         test_section("async_yield + loop cycles");
         loop->init();
         async_create_task(count_cycles(&n_event_loop_cycles));
