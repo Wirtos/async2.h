@@ -85,9 +85,9 @@ static async gatherable(s_astate state) {
         }
     }
     fawait(async_vgather(3,
-                         async_new(add, res, ASYNC_NOLOCALS),
-                         async_new(add, res, ASYNC_NOLOCALS),
-                         async_new(add, res, ASYNC_NOLOCALS))
+                         async_new(add, res, ASYNC_NONE),
+                         async_new(add, res, ASYNC_NONE),
+                         async_new(add, res, ASYNC_NONE))
                          ){
     }
     async_end;
@@ -180,7 +180,7 @@ int main(void) {
         int res = 1;
         test_section("async_cancel");
         loop->init();
-        test_assert((state = async_create_task(async_new(cancellable, &res, ASYNC_NOLOCALS))) != NULL);
+        test_assert((state = async_create_task(async_new(cancellable, &res, ASYNC_NONE))) != NULL);
         if (state) {
             async_set_on_cancel(state, cancellable_c);
             async_cancel(state);

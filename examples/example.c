@@ -56,7 +56,7 @@ static async f1(s_astate state) {
                 } /* Create new coro from f3 and wait until it completes. */
                 printf("Result: %d - %d\n", locals->res.res1, locals->res.res2);
             }
-            fawait(async_vgather(2, async_new(f4, NULL, ASYNC_NOLOCALS), async_new(f4, NULL, ASYNC_NOLOCALS))) {
+            fawait(async_vgather(2, async_new(f4, NULL, ASYNC_NONE), async_new(f4, NULL, ASYNC_NONE))) {
                 panic("vgather failed");
             }
             fawait(async_sleep(0)) {
@@ -78,7 +78,7 @@ int main(void) {
     struct async_event_loop *loop = async_get_event_loop();
     loop->init(); /* Init event loop and create some tasks to run them later. */
     async_create_task(async_new(f1, "first", struct f1_stack));
-    async_create_task(async_new(f2, NULL, ASYNC_NOLOCALS));
+    async_create_task(async_new(f2, NULL, ASYNC_NONE));
     async_create_task(async_new(f1, "second", struct f1_stack));
     loop->run_forever(); /* Block execution and run all tasks. */
     loop->destroy();
