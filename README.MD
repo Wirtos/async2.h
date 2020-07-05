@@ -18,7 +18,7 @@ Types|Description
 __AsyncCallback__| pointer to an async function with signature: `async funcname(struct astate *state)`
 __AsyncCancelCallback__| pointer to a cancel function with signature: `void funcname(struct astate *state)`
 __ASYNC\_NOLOCALS__|Type to imply empty function stack(locals) when creating new coro with `async_new`.
-__async_error__|Enum type with async errors: ASYNC_OK, ASYNC_ENOMEM, ASYNC_ECANCELLED, ASYNC_EINVALID_STATE
+__async_error__|Enum type with async errors: ASYNC_OK, ASYNC_ENOMEM, ASYNC_ECANCELED, ASYNC_EINVAL_STATE
 
 Function/Macro|Description
 --------|-----------
@@ -30,7 +30,7 @@ Function/Macro|Description
 *loop->loop_run_until_complete(main_coro)*|Block and run event loop until main_coro completes. Can be called any number of times preserving uncompleted tasks state
 *async_begin(state)*|Mark the beginning of an async subroutine
 *async_end*|Mark the end of an async subroutine
-*fawait(coro)*|Add task to the event loop and block progress until `coro` is done executing. Sets async_errno: ASYNC_ECANCELLED if `coro` task was cancelled, ASYNC_ENOMEM and frees `coro` if there's not enough memory to create task, ASYNC_OK otherwise.
+*fawait(coro)*|Add task to the event loop and block progress until `coro` is done executing. Sets async_errno: ASYNC_ECANCELED if `coro` task was cancelled, ASYNC_ENOMEM and frees `coro` if there's not enough memory to create task, ASYNC_OK otherwise.
 *async_yield*|Yield execution until it's invoked again
 *await(cond)*|Block progress until `cond` is true
 *await_while(cond)*|Block progress while `cond` is true
@@ -38,7 +38,7 @@ Function/Macro|Description
 *struct astate \*async_gather(n_coros, struct astate\*\* array_of_coros)*|Gathers together few coros to run them in parallel into single coro and returns it. If gather() is cancelled, all submitted coros (that have not completed yet) are also cancelled. 
 *struct astate \*async_vgather(n_coros, ...)*|Variadic version of async_gather, expects coros to be passed directly (no need to cleanup them on failure)
 *struct astate \*async_sleep(time_t delay)*|Block execution for `delay` seconds
-*struct astate \*async_wait_for(struct astate \* coro, time_t timeout)*| Wait for the coro to complete with a timeout. Cancel it otherwise and set async_erro to ASYNC_ECANCELLED.
+*struct astate \*async_wait_for(struct astate \* coro, time_t timeout)*| Wait for the coro to complete with a timeout. Cancel it otherwise and set async_erro to ASYNC_ECANCELED.
 *void \*async_alloc(size)* | Allocate memory automatically managed by event loop
 *void async_free(ptr)* | Free `ptr` allocated with async_alloc without waiting for event loop to do it for you. Can be useful in long running tasks, but malloc with cancel function is preferable and faster anyway.
 *struct astate \*async_create_task(coro)*|Add task to the event loop without blocking current progress, returns NULL and frees coro on failure
@@ -126,23 +126,23 @@ fawait(async_func(10)){
     if(async_errno == ASYNC_ENOMEM){
         /* Handle memory error... */
     }
-} else{
+} else {
     /* Coroutine finished without errors */
 }
 ```
 ---
 ```c
-struct astate *task = async_create_task(coro());
-ASYNC_XINCREF(task); /* Acquire ownership for task so it won't be immediately deleted after completion */
+locals->task = async_create_task(coro());
+ASYNC_XINCREF(locals->task); /* Acquire ownership for task so it won't be immediately deleted after completion */
 /* Do stuff... */
-if(task){
-    await(async_done(task));
-    if(task->err != ASYNC_OK){
+if(locals->task){
+    await(async_done(locals->task));
+    if(locals->task->err != ASYNC_OK){
         /* Handle task error manually */
     }
 }
 
-ASYNC_XDECREF(task);
+ASYNC_XDECREF(locals->task);
 ```
 ## Don't create libraries with async_new usage!
 - Always wrap coroutines in such way as asyncio_sleep or asyncio_wait_for so their use will be very simple(no need to use async_new on them as they prepare), such way you can provide custom async functions that can take any arguments, but return type still will be limited to astate \*.

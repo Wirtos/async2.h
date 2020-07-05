@@ -21,8 +21,9 @@ SOFTWARE.
  */
 #include "async2.h"
 #include <stdarg.h> /* va_start, va_end, va_arg, va_list */
-#include <stdlib.h> /* ma|re|calloc, free*/
-#include <string.h> /* memset, memmove*/
+#include <stdlib.h> /* ma|re|calloc, free */
+#include <string.h> /* memset, memmove */
+#include <time.h> /* clock_t, CLOCKS_PER_SEC */
 
 /*
  * event loop member functions declaration
@@ -138,7 +139,7 @@ static struct async_event_loop *event_loop = &async_standard_event_loop_;
     struct astate *state  \
 
 #define ASYNC_LOOP_RUNNER_BLOCK_NOREFS                         \
-    if (state->_ref_cnt == 0) {                                \
+    if (state->_refcnt == 0) {                                \
         if (!async_done(state) && state->_cancel != NULL) {    \
             state->_cancel(state);                             \
         }                                                      \
@@ -156,7 +157,7 @@ static struct async_event_loop *event_loop = &async_standard_event_loop_;
  * so it can just free and NULL all states without references inside events queue
  */
 #define ASYNC_LOOP_DESTRUCTOR_BLOCK_NOREFS                  \
-    if (state->_ref_cnt == 0) {                             \
+    if (state->_refcnt == 0) {                              \
         if (!async_done(state) && state->_cancel != NULL) { \
             state->_cancel(state);                          \
         }                                                   \
@@ -166,7 +167,7 @@ static struct async_event_loop *event_loop = &async_standard_event_loop_;
     }
 
 #define ASYNC_LOOP_RUNNER_BLOCK_CANCELLED                               \
-    else if (state->err != ASYNC_ECANCELLED && state->must_cancel) {    \
+    else if (state->err != ASYNC_ECANCELED && async_cancelled(state)){ \
         if (!async_done(state)) {                                       \
             ASYNC_DECREF(state);                                        \
             if (state->_cancel != NULL) {                               \
@@ -177,7 +178,7 @@ static struct async_event_loop *event_loop = &async_standard_event_loop_;
             ASYNC_DECREF(state->_next);                                 \
             async_cancel(state->_next);                                 \
         }                                                               \
-        state->err = ASYNC_ECANCELLED;                                  \
+        state->err = ASYNC_ECANCELED;                                   \
         state->_async_k = ASYNC_DONE;                                   \
     }
 
@@ -231,7 +232,7 @@ static void async_loop_run_until_complete_(struct astate *main) {
     while (main->_func(main) != ASYNC_DONE) {
         ASYNC_LOOP_RUNNER_BODY;
     }
-    if (main->_ref_cnt == 0) {
+    if (main->_refcnt == 0) {
         STATE_FREE(main);
     }
 }
@@ -250,11 +251,15 @@ static void async_loop_destroy_(void) {
     async_arr_destroy(&event_loop->vacant_queue);
 }
 
+#define async_set_sheduled(state) ((state)->_flags |= _ASYNC_FLAG_SHEDULED)
+
+#define async_sheduled(state) (!!((state)->_flags & _ASYNC_FLAG_SHEDULED))
+
 static struct astate *async_loop_add_task_(struct astate *state) {
     size_t i;
     if (state == NULL) return NULL;
 
-    if (!state->is_scheduled) {
+    if (!async_sheduled(state)) {
         if (event_loop->vacant_queue.length > 0) {
             i = async_arr_pop(&event_loop->vacant_queue);
             event_loop->events_queue.data[i] = state;
@@ -264,7 +269,7 @@ static struct astate *async_loop_add_task_(struct astate *state) {
                 return NULL;
             }
         }
-        state->is_scheduled = 1;
+        async_set_sheduled(state);
     }
     return state;
 }
@@ -273,9 +278,10 @@ static struct astate **async_loop_add_tasks_(size_t n, struct astate **states) {
     size_t i;
     if (states == NULL || !async_all_(n, states) || !async_arr_reserve(&event_loop->events_queue, n)) { return NULL; }
     for (i = 0; i < n; i++) {
-        if (!states[i]->is_scheduled) {
+        if (!async_sheduled(states[i])) {
             /* push would never fail here as we've reserved enough memory already, no need to check the return value */
             async_arr_push(&event_loop->events_queue, states[i]);
+            async_set_sheduled(states[i]);
         }
     }
     return states;
@@ -288,10 +294,10 @@ struct astate *async_new_coro_(AsyncCallback child_f, void *args, size_t stack_s
     padding = stack_offset - sizeof(*state);
     state = calloc(1, sizeof(*state) + padding + stack_size);
     if (state == NULL) { return NULL; }
-    state->locals = ((char *)state) + stack_offset;
-    state->_func = child_f;
+    state->locals = ((char *) state) + stack_offset;
     state->args = args;
-    state->_ref_cnt = 1; /* State has 1 reference set as function "owns" itself until exited or cancelled */
+    state->_func = child_f;
+    state->_refcnt = 1; /* State has 1 reference set as function "owns" itself until exited or cancelled */
     /* state->_async_k = ASYNC_INIT; state is already ASYNC_INIT because calloc */
     return state;
 }
@@ -308,16 +314,22 @@ void async_free_coros_(size_t n, struct astate **states) {
     }
 }
 
+static async async_yielder(struct astate *state) {
+    async_begin(state);
+            async_yield;
+    async_end;
+}
+
 typedef struct {
-    async_arr_t(struct astate *) coros;
+    async_arr_t(struct astate *) arr_coros;
 } gathered_stack;
 
 static void async_gatherer_cancel(struct astate *state) {
     gathered_stack *locals = state->locals;
     size_t i;
-    for (i = 0; i < locals->coros.length; i++) {
-        ASYNC_DECREF(locals->coros.data[i]);
-        async_cancel(locals->coros.data[i]);
+    for (i = 0; i < locals->arr_coros.length; i++) {
+        ASYNC_DECREF(locals->arr_coros.data[i]);
+        async_cancel(locals->arr_coros.data[i]);
     }
 }
 
@@ -327,13 +339,13 @@ static async async_gatherer(struct astate *state) {
     struct astate *child;
     async_begin(state);
             while (1) {
-                for (i = 0; i < locals->coros.length; i++) {
-                    child = locals->coros.data[i];
+                for (i = 0; i < locals->arr_coros.length; i++) {
+                    child = locals->arr_coros.data[i];
                     if (!async_done(child)) {
                         goto cont;
                     } else { /* Remove coroutine from the list of tracked coros */
                         ASYNC_DECREF(child);
-                        async_arr_splice(&locals->coros, i, 1);
+                        async_arr_splice(&locals->arr_coros, i, 1);
                         i--;
                     }
                 }
@@ -355,28 +367,28 @@ struct astate *async_vgather(size_t n, ...) {
     ASYNC_PREPARE_NOARGS(async_gatherer, state, gathered_stack, async_gatherer_cancel, fail);
 
     stack = state->locals;
-    async_arr_init(&stack->coros);
-    if (!async_arr_reserve(&stack->coros, n) || !async_free_later_(state, stack->coros.data)) {
+    async_arr_init(&stack->arr_coros);
+    if (!async_arr_reserve(&stack->arr_coros, n) || !async_free_later_(state, stack->arr_coros.data)) {
         goto fail;
     }
 
     va_start(v_args, n);
     for (i = 0; i < n; i++) {
-        stack->coros.data[i] = va_arg(v_args, struct astate *);
+        stack->arr_coros.data[i] = va_arg(v_args, struct astate *);
     }
     va_end(v_args);
-    stack->coros.length = n;
-    if (!async_create_tasks(n, stack->coros.data)) {
-       goto fail;
+    stack->arr_coros.length = n;
+    if (!async_create_tasks(n, stack->arr_coros.data)) {
+        goto fail;
     }
     for (i = 0; i < n; i++) {
-        ASYNC_INCREF(stack->coros.data[i]);
+        ASYNC_INCREF(stack->arr_coros.data[i]);
     }
     return state;
 
     fail:
     if (state) {
-        async_arr_destroy(&stack->coros);
+        async_arr_destroy(&stack->arr_coros);
         STATE_FREE(state);
     }
     va_start(v_args, n);
@@ -398,15 +410,15 @@ struct astate *async_gather(size_t n, struct astate **states) {
 
     ASYNC_PREPARE_NOARGS(async_gatherer, state, gathered_stack, async_gatherer_cancel, fail);
     stack = state->locals;
-    stack->coros.capacity = n;
-    stack->coros.length = n;
-    stack->coros.data = states;
+    stack->arr_coros.capacity = n;
+    stack->arr_coros.length = n;
+    stack->arr_coros.data = states;
     if (!async_create_tasks(n, states)) {
         STATE_FREE(state);
         return NULL;
     }
     for (i = 0; i < n; i++) {
-        ASYNC_INCREF(stack->coros.data[i]);
+        ASYNC_INCREF(stack->arr_coros.data[i]);
     }
     return state;
     fail:
@@ -415,25 +427,28 @@ struct astate *async_gather(size_t n, struct astate **states) {
 
 typedef struct {
     double sec;
-    time_t start;
+    clock_t start;
 } sleeper_stack;
 
 
 static async async_sleeper(struct astate *state) {
     sleeper_stack *locals = state->locals;
     async_begin(state);
-            locals->start = time(NULL);
-            await_while(difftime(time(NULL), locals->start) < locals->sec);
+            locals->start = clock();
+            await_while((double) (clock() - locals->start) / CLOCKS_PER_SEC < locals->sec);
     async_end;
 }
 
 struct astate *async_sleep(double delay) {
     struct astate *state;
     sleeper_stack *stack;
-
-    ASYNC_PREPARE_NOARGS(async_sleeper, state, sleeper_stack, NULL, fail);
-    stack = state->locals; /* Yet another predefined locals trick for mere optimisation, use async_alloc_ in real adapter functions instead. */
-    stack->sec = delay;
+    if (delay == 0) {
+        ASYNC_PREPARE_NOARGS(async_yielder, state, ASYNC_NONE, NULL, fail);
+    } else {
+        ASYNC_PREPARE_NOARGS(async_sleeper, state, sleeper_stack, NULL, fail);
+        stack = state->locals; /* Yet another predefined locals trick for mere optimisation, use async_alloc_ in real adapter functions instead. */
+        stack->sec = delay;
+    }
     return state;
     fail:
     return NULL;
@@ -441,13 +456,13 @@ struct astate *async_sleep(double delay) {
 
 typedef struct {
     double sec;
-    time_t start;
+    clock_t start;
 } waiter_stack;
 
 static void async_waiter_cancel(struct astate *state) {
     struct astate *child = state->args;
     if (child == NULL) return;
-    if (child->is_scheduled) {
+    if (async_sheduled(child)) {
         if (!async_done(child)) {
             async_cancel(child);
         }
@@ -466,10 +481,10 @@ static async async_waiter(struct astate *state) {
                 async_errno = ASYNC_ENOMEM;
                 async_exit;
             }
-            locals->start = time(NULL);
-            await_while(!async_done(child) && difftime(time(NULL), locals->start) < locals->sec);
+            locals->start = clock();
+            await_while(!async_done(child) && (double) (clock() - locals->start) / CLOCKS_PER_SEC < locals->sec);
             if (!async_done(child)) {
-                async_errno = ASYNC_ECANCELLED;
+                async_errno = ASYNC_ECANCELED;
                 async_cancel(child);
             }
             ASYNC_DECREF(child);
@@ -538,9 +553,9 @@ const char *async_strerror(async_error err) {
             return "OK";
         case ASYNC_ENOMEM:
             return "MEMORY ALLOCATION ERROR";
-        case ASYNC_ECANCELLED:
+        case ASYNC_ECANCELED:
             return "COROUTINE WAS CANCELLED";
-        case ASYNC_EINVALID_STATE:
+        case ASYNC_EINVAL_STATE:
             return "INVALID STATE WAS PASSED TO COROUTINE";
         default:
             return "UNKNOWN ERROR";

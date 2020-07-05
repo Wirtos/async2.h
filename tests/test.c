@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define test_section(desc)        \
     {                             \
@@ -196,7 +197,7 @@ int main(void) {
         test_section("async_errno");
         loop->init();
         loop->run_until_complete(state);
-        test_assert(err == ASYNC_ECANCELLED);
+        test_assert(err == ASYNC_ECANCELED);
         loop->destroy();
     }
 
@@ -213,14 +214,16 @@ int main(void) {
     {
         time_t st;
         int i;
+        double diff;
         test_section("loop->run_until_complete");
         loop->init();
         for (i = 0; i < 10; i++) {
             async_create_task(async_sleep(1000));
         }
         time(&st);
-        loop->run_until_complete(async_sleep(0));
-        test_assert(difftime(time(NULL), st) <= 1);
+        loop->run_until_complete(async_sleep(1));
+        diff = difftime(time(NULL), st);
+        test_assert(1 <= diff && diff <= 2);
         loop->destroy();
     }
 
@@ -229,7 +232,7 @@ int main(void) {
         test_section("async_wait_for");
         loop->init();
         loop->run_until_complete(async_new(waiter, &err, ASYNC_NONE));
-        test_assert(err == ASYNC_ECANCELLED);
+        test_assert(err == ASYNC_ECANCELED);
         loop->destroy();
     }
 

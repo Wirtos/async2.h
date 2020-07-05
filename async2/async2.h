@@ -49,7 +49,11 @@ SOFTWARE.
  */
 
 #include <stddef.h> /* NULL, offsetof */
-#include <time.h> /* time_t */
+
+#ifdef _MSC_VER
+    /* silent MSVC's warning on unnamed type definition in parentheses for _ASYNC_COMPUTE_OFFSET because it's valid C */
+    #pragma warning(disable : 4116)
+#endif
 
 #ifdef ASYNC_DEBUG
     #include <stdio.h> /* fprintf, stderr */
@@ -63,9 +67,11 @@ typedef enum ASYNC_EVT {
 } async;
 
 typedef enum ASYNC_ERR {
-    ASYNC_OK = 0, ASYNC_ENOMEM = 12, ASYNC_ECANCELLED = 42, ASYNC_EINVALID_STATE
+    ASYNC_OK = 0, ASYNC_ENOMEM = 12, ASYNC_ECANCELED = 42, ASYNC_EINVAL_STATE
 } async_error;
 
+#define _ASYNC_FLAG_SHEDULED (0x1) /* 0b1 */
+#define _ASYNC_FLAG_MUST_CANCEL (0x1 << 1) /* 0b10 */
 
 /*
  * Core async type to imply empty locals when creating new coro
@@ -94,21 +100,23 @@ typedef void (*AsyncCancelCallback)(struct astate *);
   struct { T *data; size_t length, capacity; }
 
 struct astate {
-    int must_cancel; /* true if function was cancelled or will be cancelled soon */
-    int is_scheduled; /* true if function was scheduled with fawait or create_task */
-    async_error err; /* 0 if state has no errors, async_error otherwise */
+    /* user-accessible values: */
     void *args; /* args to be passed along with state to the async function */
-    void *locals; /* function stack(locals) to be passed with state to the async function */
-
-    long int _async_k; /* current execution state. ASYNC_EVT if < 3 and number of line in the function otherwise (means that state(or its function) is still running) */
+    void *locals; /* function's stack pointer (locals_t) to be passed with state to the async function */
+    async_error err; /* ASYNC_OK(0) if state has no errors, other async_error otherwise, also might be a custom error code defined by function that sets errno itself */
+    /* internal numeric values: */
+    size_t _refcnt; /* reference count number of functions still using this state. 1 by default, because coroutine owns itself too. If number of references is 0, the state becomes invalid and will be freed by the event loop soon */
+    unsigned int _async_k; /* current execution state. ASYNC_EVT if <= ASYNC_DONE and number of line in the function otherwise (means that state (or its function) is still running) */
+    char _flags; /* default event loop functions use first 2 bit flags: FLAG_SHEDULED and FLAG_MUST_CANCEL, custom event loop might support more */
+    /* containers: */
     AsyncCallback _func; /* function to be called by the event loop */
     AsyncCancelCallback _cancel; /* function to be called in case of cancelling state, can be NULL */
+    s_astate _next; /* child state used by fawait */
+
     async_arr_t(void*) _allocs; /* array of memory blocks allocated by async_alloc and managed by the event loop */
-    size_t _ref_cnt; /* number of functions still using this state. 1 by default, because state owns itself. If number of references is 0, the state becomes invalid and will be freed by the event loop as soon as possible */
-    struct astate *_next; /* child state used by fawait */
 
     #ifdef ASYNC_DEBUG
-    const char *debug_taskname;
+    const char *debug_taskname; /* must never be explicitly initialized */
     #endif
 };
 
@@ -126,15 +134,18 @@ struct async_event_loop {
 
     void (*run_until_complete)(struct astate *main_state);
 
+    /* Main tasks queue */
     async_arr_t(struct astate *) events_queue;
+    /* Helper stack to keep track of vacant indices, allows to avoid slow array
+    * slicing when there's a lot of tasks with a cost of bigger memory footprint */
     async_arr_t(size_t) vacant_queue;
 };
 
 extern struct async_event_loop *async_default_event_loop;
 
-#define ASYNC_INCREF(coro) coro->_ref_cnt++
+#define ASYNC_INCREF(coro) coro->_refcnt++
 
-#define ASYNC_DECREF(coro) coro->_ref_cnt--
+#define ASYNC_DECREF(coro) coro->_refcnt--
 
 #define ASYNC_XINCREF(coro) if(coro) ASYNC_INCREF(coro)
 
@@ -143,10 +154,7 @@ extern struct async_event_loop *async_default_event_loop;
 
 /*
  * Mark the start of an async subroutine
- *
- * Unknown continuation values now restart the subroutine from the beginning.
- *
- * ASYNC_DEBUG mode is c99+ only.
+ * Unknown continuation values now set async_errno to ASYNC_EINVAL_STATE.
  */
 #ifdef ASYNC_DEBUG
 #define async_begin(k)                                     \
@@ -175,7 +183,7 @@ extern struct async_event_loop *async_default_event_loop;
     case ASYNC_DONE:                                                                                     \
         return ASYNC_DONE;                                                                               \
     default:                                                                                             \
-        async_errno = ASYNC_EINVALID_STATE;                                                              \
+        async_errno = ASYNC_EINVAL_STATE;                                                              \
         fprintf(stderr, "<ADEBUG> WARNING: %s: %s(%d)\n", async_strerror(async_errno), __FILE__, __LINE__);\
         return ASYNC_DONE;} (void) 0
 #else
@@ -186,7 +194,7 @@ extern struct async_event_loop *async_default_event_loop;
     case ASYNC_DONE:                        \
         return ASYNC_DONE;                  \
     default:                                \
-        async_errno = ASYNC_EINVALID_STATE; \
+        async_errno = ASYNC_EINVAL_STATE; \
         return ASYNC_DONE;} (void) 0
 #endif
 
@@ -229,12 +237,12 @@ extern struct async_event_loop *async_default_event_loop;
 /*
  * Cancels running coroutine
  */
-#define async_cancel(coro) ((coro)->must_cancel=1)
+#define async_cancel(coro) ((coro)->_flags |= _ASYNC_FLAG_MUST_CANCEL)
 
 /*
  * returns 1 if function was cancelled
  */
-#define async_cancelled(coro) ((coro)->must_cancel==1)
+#define async_cancelled(coro) (!!((coro)->_flags & _ASYNC_FLAG_MUST_CANCEL))
 
 /*
  * Check if async subroutine is done
