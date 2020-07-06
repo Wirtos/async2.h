@@ -1,5 +1,5 @@
 [![Build Status](https://travis-ci.com/Wirtos/async2.h.svg?branch=master)](https://travis-ci.com/Wirtos/async2.h)
-# async2.h - asynchronous, stackfull subroutines
+# async2.h - asynchronous, stackful subroutines
 Taking inspiration from protothreads, async.h, coroutines.h and async/await as found in python 
 this is an async/await/fawait/event loop implementation for C based on Duff's device.
 

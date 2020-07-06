@@ -23,7 +23,7 @@ SOFTWARE.
 #ifndef ASYNC2_H
 #define ASYNC2_H
 /*
- * = Stackfull Async Subroutines =
+ * = Stackful Async Subroutines =
  *
  * Taking inspiration from protothreads, async.h, coroutines.h and async/await as found in python
  * this is an async/await/fawait/event loop implementation for C based on Duff's device.
