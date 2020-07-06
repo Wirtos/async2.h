@@ -462,13 +462,11 @@ typedef struct {
 static void async_waiter_cancel(struct astate *state) {
     struct astate *child = state->args;
     if (child == NULL) return;
-    if (async_sheduled(child)) {
+    if (async_create_task(child)) {
         if (!async_done(child)) {
             async_cancel(child);
         }
         ASYNC_DECREF(child);
-    } else {
-        STATE_FREE(child);
     }
 }
 
