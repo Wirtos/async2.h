@@ -107,7 +107,7 @@ struct astate {
     /* internal numeric values: */
     size_t _refcnt; /* reference count number of functions still using this state. 1 by default, because coroutine owns itself too. If number of references is 0, the state becomes invalid and will be freed by the event loop soon */
     unsigned int _async_k; /* current execution state. ASYNC_EVT if <= ASYNC_DONE and number of line in the function otherwise (means that state (or its function) is still running) */
-    char _flags; /* default event loop functions use first 2 bit flags: FLAG_SHEDULED and FLAG_MUST_CANCEL, custom event loop might support more */
+    unsigned char _flags; /* default event loop functions use first 2 bit flags: FLAG_SHEDULED and FLAG_MUST_CANCEL, custom event loop might support more */
     /* containers: */
     AsyncCallback _func; /* function to be called by the event loop */
     AsyncCancelCallback _cancel; /* function to be called in case of cancelling state, can be NULL */
@@ -165,8 +165,8 @@ extern struct async_event_loop *async_default_event_loop;
         fprintf(stderr, "<ADEBUG> Begin '%s'\n", __func__);\
         _async_p->debug_taskname = __func__
 #else
-#define async_begin(k)                      \
-    struct astate *_async_p = k;            \
+#define async_begin(st)                     \
+    struct astate *_async_p = st;           \
     switch(_async_p->_async_k) {            \
     case ASYNC_INIT: (void)0
 #endif
@@ -253,8 +253,8 @@ extern struct async_event_loop *async_default_event_loop;
 /*
  * Create a new coro
  */
-#define async_new(call_func, args, locals_t)\
-  async_new_coro_((call_func), (args), sizeof(locals_t), _ASYNC_COMPUTE_OFFSET(struct astate, locals_t))
+#define async_new(call_func, args, T_locals)\
+  async_new_coro_((call_func), (args), sizeof(T_locals), _ASYNC_COMPUTE_OFFSET(struct astate, T_locals))
 
 /*
  * Create task from coro
@@ -275,27 +275,26 @@ extern struct async_event_loop *async_default_event_loop;
  * Create task and wait until the coro succeeds. Resets async_errno and sets it.
  */
 
-#define fawait(coro)                               \
-        _async_p->_next = async_create_task(coro); \
-        if (_async_p->_next) {                     \
-            ASYNC_INCREF(_async_p->_next);         \
-            await(async_done(_async_p->_next));    \
-            ASYNC_DECREF(_async_p->_next);         \
-            async_errno = _async_p->_next->err;    \
-            _async_p->_next = NULL;                \
-        } else { async_errno = ASYNC_ENOMEM; }     \
+#define fawait(coro)                                       \
+        if ((_async_p->_next = async_create_task(coro))) { \
+            ASYNC_INCREF(_async_p->_next);                 \
+            await(async_done(_async_p->_next));            \
+            ASYNC_DECREF(_async_p->_next);                 \
+            async_errno = _async_p->_next->err;            \
+            _async_p->_next = NULL;                        \
+        } else { async_errno = ASYNC_ENOMEM; }             \
         if(async_errno != ASYNC_OK)
 
 /*
  * Initial preparation for adapter functions like async_sleep
  */
-#define ASYNC_PREPARE_NOARGS(async_callback, state, locals_t, cancel_f, err_label) \
-    (state) = async_new(async_callback, NULL, locals_t);                           \
+#define ASYNC_PREPARE_NOARGS(async_callback, state, T_locals, cancel_f, err_label) \
+    (state) = async_new(async_callback, NULL, T_locals);                           \
     if (!(state)) goto err_label;                                                  \
     async_set_on_cancel(state, cancel_f)
 
-#define ASYNC_PREPARE(async_callback, state, args_size, locals_t, cancel_f, err_label) \
-    ASYNC_PREPARE_NOARGS(async_callback, state, locals_t, cancel_f);                   \
+#define ASYNC_PREPARE(async_callback, state, args_size, T_locals, cancel_f, err_label) \
+    ASYNC_PREPARE_NOARGS(async_callback, state, T_locals, cancel_f);                   \
     if (args_size) {                                                                   \
         (state)->args = async_alloc_((state), args_size);                              \
         if (!state->args) {                                                            \
