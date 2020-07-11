@@ -70,8 +70,8 @@ typedef enum ASYNC_ERR {
     ASYNC_OK = 0, ASYNC_ENOMEM = 12, ASYNC_ECANCELED = 42, ASYNC_EINVAL_STATE
 } async_error;
 
-#define _ASYNC_FLAG_SHEDULED (0x1) /* 0b1 */
-#define _ASYNC_FLAG_MUST_CANCEL (0x1 << 1) /* 0b10 */
+#define _ASYNC_FLAG_SHEDULED    0x1 /* 0b1 */
+#define _ASYNC_FLAG_MUST_CANCEL 0x2 /* 0b10 */
 
 /*
  * Core async type to imply empty locals when creating new coro
@@ -194,8 +194,9 @@ extern struct async_event_loop *async_default_event_loop;
     case ASYNC_DONE:                        \
         return ASYNC_DONE;                  \
     default:                                \
-        async_errno = ASYNC_EINVAL_STATE; \
-        return ASYNC_DONE;} (void) 0
+        async_errno = ASYNC_EINVAL_STATE;   \
+        return ASYNC_DONE;                  \
+    } (void)0
 #endif
 
 /*
