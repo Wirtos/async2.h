@@ -44,7 +44,7 @@ s_astate|*async_wait_for(s_astate coro, double timeout)*| Wait for the coro to c
 void \*|*async_alloc(size_t size)* | Allocate memory automatically managed by the event loop, no need to free by yourself
 void|*async_free(void \*ptr)* | Free `ptr` allocated with async_alloc without waiting for event loop to do it for you. Can be useful in long running tasks, but malloc with cancel function is preferable and faster anyway.
 int|*int async_free_later_(struct astate \*state, void \*mem)*|returns true if memory block was successfully queued and will be freed later by the event loop
-MACRO_BLOCK|*async_cancel(s_astate coro)*| Cancels current coro. Note, that if coro operates some custom memory not allocated with async_alloc it'll result in a memory leak.
+MACRO_BLOCK|*async_cancel(s_astate coro)*| Cancels `coro`. Note, that if coro operates some custom memory not allocated with async_alloc it'll result in a memory leak.
 int|*async_cancelled(s_astate coro)*|Returns true if coro was cancelled, false otherwise
 MACRO_BLOCK|*async_on_cancel(AsyncCancelCallback cancel_func)*|Set cancel function to be called on cancellation for current async function. cancel_func must follow AsyncCancelCallback type signature
 MACRO_BLOCK|*async_set_on_cancel(s_astate coro, AsyncCancelCallback cancel_func)*|Same as function above, but takes coro instead of using current function

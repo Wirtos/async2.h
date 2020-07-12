@@ -251,9 +251,9 @@ static void async_loop_destroy_(void) {
     async_arr_destroy(&event_loop->vacant_queue);
 }
 
-#define async_set_sheduled(state) ((state)->_flags |= _ASYNC_FLAG_SHEDULED)
+#define async_set_sheduled(state) ((state)->_flags |= _ASYNC_FLAG_SCHEDULED)
 
-#define async_sheduled(state) (!!((state)->_flags & _ASYNC_FLAG_SHEDULED))
+#define async_sheduled(state) (!!((state)->_flags & _ASYNC_FLAG_SCHEDULED))
 
 static struct astate *async_loop_add_task_(struct astate *state) {
     size_t i;
@@ -328,6 +328,7 @@ static void async_gatherer_cancel(struct astate *state) {
     gathered_stack *locals = state->locals;
     size_t i;
     for (i = 0; i < locals->arr_coros.length; i++) {
+        if (!locals->arr_coros.data[i]) continue;
         ASYNC_DECREF(locals->arr_coros.data[i]);
         async_cancel(locals->arr_coros.data[i]);
     }
@@ -341,12 +342,12 @@ static async async_gatherer(struct astate *state) {
             while (1) {
                 for (i = 0; i < locals->arr_coros.length; i++) {
                     child = locals->arr_coros.data[i];
+                    if (!child) continue;
                     if (!async_done(child)) {
                         goto cont;
-                    } else { /* Remove coroutine from the list of tracked coros */
+                    } else { /* NULL coroutine in the list of tracked coros */
                         ASYNC_DECREF(child);
-                        async_arr_splice(&locals->arr_coros, i, 1);
-                        i--;
+                        locals->arr_coros.data[i] = NULL;
                     }
                 }
                 break;
@@ -398,8 +399,6 @@ struct astate *async_vgather(size_t n, ...) {
     }
     va_end(v_args);
     return NULL;
-
-
 }
 
 

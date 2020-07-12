@@ -70,7 +70,7 @@ typedef enum ASYNC_ERR {
     ASYNC_OK = 0, ASYNC_ENOMEM = 12, ASYNC_ECANCELED = 42, ASYNC_EINVAL_STATE
 } async_error;
 
-#define _ASYNC_FLAG_SHEDULED    0x1 /* 0b1 */
+#define _ASYNC_FLAG_SCHEDULED   0x1 /* 0b1 */
 #define _ASYNC_FLAG_MUST_CANCEL 0x2 /* 0b10 */
 
 /*
