@@ -19,6 +19,7 @@ __AsyncCallback__| pointer to an async function with signature: `async funcname(
 __AsyncCancelCallback__| pointer to a cancel function with signature: `void funcname(struct astate *state)`
 __ASYNC_NONE__|Type to imply empty function stack(locals) when creating new coro with `async_new`, typedef for `char`
 __async_error__|Enum type with async errors: ASYNC_OK, ASYNC_ENOMEM, ASYNC_ECANCELED, ASYNC_EINVAL_STATE
+__s_astate__|typedef for async state pointer (struct astate) 
 
 Return type|Function/Macro|Description
 ----|-----------|-------------
@@ -57,8 +58,7 @@ void|*async_free_coros_(size_t n, s_astate \*coros)*|free n coros in array ignor
 ## Ownership of references system
 ### (handled automatically by fawait/wait_for/gather coros, manual use only)
 ###### Some future api methods might use su_state as input coro type, explicitly indicating that it steals current ownership, in such case user mustn't access passed s_astate object or should INCREF ownership manually once more before transferring ownership to the method.
-
-Function|Description
+Macro|Description
 --------|-----------
 *ASYNC_INCREF(coro)*|Mark coro as "currently in use", so it won't be deleted automatically. Must be followed by ASYNC_DECREF somewhere else in the async function/cancel function". 
 *ASYNC_DECREF(coro)*|Mark coro as "isn't used anymore". Note, that it won't be deleted immediately if other functions used INCREF on this coro too
