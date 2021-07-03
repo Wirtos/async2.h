@@ -31,19 +31,21 @@ SOFTWARE.
 /*
  * event loop member functions declaration
  */
-static struct astate *async_loop_add_task_(struct astate *state);
+static struct astate *async_loop_create_task_(struct astate *state);
 
-static struct astate **async_loop_add_tasks_(size_t n, struct astate **states);
+static struct astate **async_loop_create_tasks_(size_t n, struct astate **states);
 
 static void async_loop_init_(void);
 
 static void async_loop_run_forever_(void);
 
-static void async_loop_run_until_complete_(struct astate *main);
+static void async_loop_run_until_complete_(struct astate *amain);
 
 static void async_loop_close_(void);
 
 static void async_loop_stop_(void);
+
+static int async_all_(size_t n, struct astate *states[]);
 
 /* todo: optionally switch to arena allocator? */
 
@@ -67,16 +69,16 @@ static void *async_loop_calloc_(size_t count, size_t size){
     async_loop_init_,               \
     async_loop_stop_,               \
     async_loop_close_,              \
-    async_loop_add_task_,           \
-    async_loop_add_tasks_,          \
+    async_loop_create_task_,        \
+    async_loop_create_tasks_,       \
     async_loop_run_forever_,        \
     async_loop_run_until_complete_, \
     async_loop_malloc_,             \
     async_loop_realloc_,            \
     async_loop_calloc_,             \
     async_loop_free_,               \
-    {NULL, 0, 0},                   \
-    {NULL, 0, 0},                   \
+    NULL, NULL,                     \
+    0,                              \
     0
 
 /* Init default event loop, custom event loop should create own initializer instead. */
@@ -90,7 +92,10 @@ const struct async_event_loop async_default_event_loop = {
 
 static struct async_event_loop *event_loop = &async_standard_event_loop_;
 
+const struct async_event_loop * const * const async_loop = (const struct async_event_loop * const * const) &event_loop;
+
 /* array is inspired by rxi's vec: https://github.com/rxi/vec */
+/* todo: this one relies on UB, backport to my port or use something completely different */
 static int async_arr_expand_(char **data, const size_t *len, size_t *capacity, size_t memsz, size_t n_memb) {
     void *mem;
     size_t n, needed;
@@ -150,191 +155,165 @@ static void async_arr_splice_(
 #define async_arr_pop(arr) \
     (arr)->data[--(arr)->length]
 
-static int async_all_(size_t n, struct astate **states) { /* Returns false if at least one state is NULL */
-    while (n--) {
-        if (states[n] == NULL) { return 0; }
+static int async_all_(size_t n, struct astate *states[]) { /* Returns false if at least one state is NULL */
+    while (n) {
+        if (states[--n] == NULL) { return 0; }
     }
     return 1;
 }
 
 /* Free astate, its allocs and invalidate it completely */
-#define STATE_FREE(state)                                                                 \
-    {                                                                                     \
-        if ((state)->_runner->destr) (state)->_runner->destr(state);                      \
-        while ((state)->_allocs.length--) {                                               \
-            async_get_event_loop()->free((state)->_allocs.data[(state)->_allocs.length]); \
-        }                                                                                 \
-        async_arr_destroy(&(state)->_allocs);                                             \
-        async_get_event_loop()->free(state);                                              \
-    }                                                                                     \
-    (void) 0
+#define STATE_FREE(state)                                                     \
+    do {                                                                      \
+        if ((state)->_runner->destr) (state)->_runner->destr(state);          \
+        while ((state)->_allocs.length--) {                                   \
+            event_loop->free((state)->_allocs.data[(state)->_allocs.length]); \
+        }                                                                     \
+        async_arr_destroy(&(state)->_allocs);                                 \
+        event_loop->free(state);                                              \
+    } while (0)
 
+static void async_loop_append_(struct astate *state){
+    struct async_event_loop *loop = event_loop;
 
-#define ASYNC_LOOP_RUNNER_BLOCK_NOREFS                          \
-    if (state->_refcnt == 0) {                                  \
-        STATE_FREE(state);                                      \
-        if (async_arr_push(&event_loop->_vacant_queue, i)) {    \
-            event_loop->_events_queue.data[i] = NULL;           \
-        } else {                                                \
-            async_arr_splice(&event_loop->_events_queue, i, 1); \
-            i--;                                                \
-        }                                                       \
+    if (loop->n_tasks == 0) {
+        loop->head = loop->tail = state;
+    } else {
+        loop->tail->_next = state;
+        state->_prev = loop->tail;
+        state->_prev = NULL;
+        loop->tail = state;
     }
+    loop->n_tasks++;
+}
 
-/*
- * This block is faster than runner because it knows that you don't need event loop anymore,
- * so it can just free and NULL all states without references inside events queue
- */
-#define ASYNC_LOOP_DESTRUCTOR_BLOCK_NOREFS        \
-    if (state->_refcnt == 0) {                    \
-        STATE_FREE(state);                        \
-        event_loop->_events_queue.data[i] = NULL; \
-        event_loop->_vacant_queue.length++;       \
-    }
 
-#define ASYNC_LOOP_RUNNER_BLOCK_CANCELLED                                   \
-    else if (state->err != ASYNC_ECANCELLED && async_is_cancelled(state)) { \
-        if (!async_is_done(state)) {                                        \
-            ASYNC_DECREF(state);                                            \
-        }                                                                   \
-        if (state->_child) {                                                \
-            ASYNC_DECREF(state->_child);                                    \
-            async_cancel(state->_child);                                    \
-        }                                                                   \
-        state->err = ASYNC_ECANCELLED;                                      \
-        state->_async_k = ASYNC_DONE;                                       \
-    }
+static void async_loop_remove_(struct astate *state){
+    struct async_event_loop *loop = event_loop;
+    assert(loop->n_tasks != 0);
 
-#define ASYNC_LOOP_BLOCK_BEGIN                               \
-    for (i = 0; i < event_loop->_events_queue.length; i++) { \
-        state = event_loop->_events_queue.data[i];           \
-        if (state == NULL) {                                 \
-            continue;                                        \
+    if (state == loop->tail) loop->tail = loop->tail->_prev;
+    else if (state->_next)
+        state->_next->_prev = state->_prev;
+
+    if (state == loop->head) loop->head = loop->head->_next;
+    else if (state->_prev)
+        state->_prev->_next = state->_next;
+
+    state->_prev = state->_next = NULL;
+    loop->n_tasks--;
+}
+
+
+static void async_loop_once_(){
+    struct astate *state = event_loop->head;
+
+    while (state != NULL){
+        struct astate *next = state->_next;
+
+        if(state->_refcnt == 0){
+            async_loop_remove_(state);
+            STATE_FREE(state);
+        } else if (state->err != ASYNC_ECANCELLED && async_get_flag(state, ASYNC_TASK_FLAG_CANCELLED)){
+            async_unset_flag(state, ASYNC_TASK_FLAG_CANCELLED);
+            if(!async_is_done(state)){
+                ASYNC_DECREF(state);
+            }
+            if(state->_child){
+                ASYNC_DECREF(state->_child);
+                async_cancel(state->_child);
+            }
+            state->err = ASYNC_ECANCELLED;
+            state->_async_k = ASYNC_DONE;
+            /* check if refcount is 0 now */
+            continue;
+        } else if (!async_is_done(state) && (!state->_child || async_is_done(state->_child))){
+            state->_runner->coro(state);
         }
 
-/* Parent while loop breaks if all array elements are vacant (NULL'ed) */
-#define ASYNC_LOOP_BLOCK_END \
-    }(void)0
+        state = next;
+    }
 
-#define ASYNC_LOOP_RUNNER_BLOCK                                                           \
-    size_t i;                                                                             \
-    struct astate *state;                                                                 \
-    ASYNC_LOOP_BLOCK_BEGIN                                                                \
-                                                                                          \
-    ASYNC_LOOP_RUNNER_BLOCK_NOREFS                                                        \
-    ASYNC_LOOP_RUNNER_BLOCK_CANCELLED                                                     \
-    else if (!async_is_done(state) && (!state->_child || async_is_done(state->_child))) { \
-        /* Nothing special to do with this function, let it run */                        \
-        state->_runner->coro(state);                                                      \
-    }                                                                                     \
-                                                                                          \
-    ASYNC_LOOP_BLOCK_END
-
-#define ASYNC_LOOP_DESTRUCTOR_BLOCK                               \
-    size_t i;                                                     \
-    struct astate *state;                                         \
-    ASYNC_LOOP_BLOCK_BEGIN                                        \
-                                                                  \
-    ASYNC_LOOP_DESTRUCTOR_BLOCK_NOREFS                            \
-    ASYNC_LOOP_RUNNER_BLOCK_CANCELLED                             \
-    else if (!async_is_cancelled(state)) {                        \
-        /* Nothing special to do with this function, cancel it */ \
-        async_cancel(state);                                      \
-        i--;                                                      \
-    }                                                             \
-                                                                  \
-    ASYNC_LOOP_BLOCK_END
+}
 
 static void async_loop_run_forever_(void) {
     async_set_flag(event_loop, ASYNC_LOOP_FLAG_RUNNING);
-    while (event_loop->_events_queue.length > 0 /* todo: && event_loop->_events_queue.length > event_loop->_vacant_queue.length*/) {
-        ASYNC_LOOP_RUNNER_BLOCK;
-    }
+
     async_unset_flag(event_loop, ASYNC_LOOP_FLAG_RUNNING);
 }
 
-static void async_loop_run_until_complete_(struct astate *main) {
-    if (main == NULL) {
-        return;
-    }
+static void async_loop_run_until_complete_(struct astate *amain) {
+    if (amain == NULL) { return; }
+
     async_set_flag(event_loop, ASYNC_LOOP_FLAG_RUNNING);
-    while (main->_runner->coro(main) != ASYNC_DONE) {
-       ASYNC_LOOP_RUNNER_BLOCK;
+
+    while (amain->_runner->coro(amain) != ASYNC_DONE) {
+        async_loop_once_();
     }
+
     async_unset_flag(event_loop, ASYNC_LOOP_FLAG_RUNNING);
-    if (main->_refcnt == 0) {
-        STATE_FREE(main);
-    }
+    if (amain->_refcnt == 0) { STATE_FREE(amain); }
 }
 
 static void async_loop_init_(void) {
-    async_arr_init(&event_loop->_events_queue);
-    async_arr_init(&event_loop->_vacant_queue);
+    /* todo: loop constructor */
 }
 
 static void async_loop_close_(void) {
-    assert((ignored_"Loop mustn't be running during loop->close call", !async_get_flag(event_loop, ASYNC_LOOP_FLAG_RUNNING)));
-    while (event_loop->_events_queue.length > 0 /* todo: && event_loop->_events_queue.length > event_loop->_vacant_queue.length */) {
-        ASYNC_LOOP_DESTRUCTOR_BLOCK;
-    }
-    async_arr_destroy(&event_loop->_events_queue);
-    async_arr_destroy(&event_loop->_vacant_queue);
-    event_loop = NULL;
+    /* todo: loop destructor */
 }
 
 static void async_loop_stop_(void){
     async_unset_flag(event_loop, ASYNC_LOOP_FLAG_RUNNING);
 }
 
-#define async_set_sheduled(task) (async_set_flag((task), ASYNC_TASK_FLAG_SCHEDULED))
+#define async_set_scheduled(task) (async_set_flag((task), ASYNC_TASK_FLAG_SCHEDULED))
 
-#define async_is_sheduled(task) (async_get_flag(task, ASYNC_TASK_FLAG_SCHEDULED))
+#define async_is_scheduled(task) (async_get_flag(task, ASYNC_TASK_FLAG_SCHEDULED))
 
-static struct astate *async_loop_add_task_(struct astate *state) {
-    size_t i;
-    if (state == NULL) return NULL;
+static struct astate *async_loop_create_task_(struct astate *state) {
+    if (state == NULL) { return NULL; }
 
-    if (!async_is_sheduled(state)) {
-        if (event_loop->_vacant_queue.length > 0) {
-            i = async_arr_pop(&event_loop->_vacant_queue);
-            event_loop->_events_queue.data[i] = state;
-        } else {
-            if (!async_arr_push(&event_loop->_events_queue, state)) {
-                STATE_FREE(state);
-                return NULL;
-            }
-        }
-        async_set_sheduled(state);
+    if (!async_is_scheduled(state)) {
+        async_loop_append_(state);
+        async_set_scheduled(state);
     }
     return state;
 }
 
 
-
-static struct astate **async_loop_add_tasks_(size_t n, struct astate **states) {
+static struct astate **async_loop_create_tasks_(size_t n, struct astate **states) {
     size_t i;
-    if (states == NULL || !async_all_(n, states) || !async_arr_reserve(&event_loop->_events_queue, n)) { return NULL; }
+    if (!(states && async_all_(n, states))) {
+        return NULL;
+    }
+
     for (i = 0; i < n; i++) {
-        if (!async_is_sheduled(states[i])) {
-            /* push would never fail here as we've reserved enough memory already, no need to check the return value */
-            async_arr_push(&event_loop->_events_queue, states[i]);
-            async_set_sheduled(states[i]);
+        if (!async_is_scheduled(states[i])) {
+            async_loop_append_(states[i]);
+            async_set_scheduled(states[i]);
         }
     }
     return states;
 }
 
 struct astate *async_new_task_(const async_runner *runner, void *args) {
-    struct astate *state = event_loop->calloc(1, runner->sizes.task_size ? runner->sizes.task_size : sizeof(*state));
+    struct astate *state = event_loop->calloc(1, sizeof(*state) + runner->sizes.task_addsize);
     if (state == NULL) { return NULL; }
 
-    state->stack = (runner->sizes.stack_size)
+#ifdef ASYNC_DEBUG
+    state->stack = (runner->sizes.stack_offset)
                       ? ((char *) state) + runner->sizes.stack_offset
                       : NULL;
+#else
+    state->stack = ((char *) state) + runner->sizes.stack_offset;
+#endif
 
     state->args = (runner->sizes.args_size)
-                    ? (assert((ignored_ "Pointer to args must be non-NULL", args)),
-                       memcpy(((char *) state) + runner->sizes.args_offset, args, runner->sizes.args_size))
+                    ? (
+                       assert((ignored_"Pointer to args must be non-NULL", args)), /* todo: should be a static assertion? */
+                       memcpy(((char *) state) + runner->sizes.args_offset, args, runner->sizes.args_size)
+                      )
                     : args;
 
     state->_runner = runner;
@@ -342,6 +321,7 @@ struct astate *async_new_task_(const async_runner *runner, void *args) {
     state->_allocs.data = NULL;
     state->_refcnt = 1; /* State has 1 reference set as function "owns" itself until exited or cancelled */
     /* state->_async_k = ASYNC_INIT; state is already ASYNC_INIT because calloc */
+    state->_prev = state->_next = NULL;
     return state;
 }
 
@@ -352,8 +332,8 @@ void async_free_task_(struct astate *state) {
 }
 
 void async_free_tasks_(size_t n, struct astate *states[]) {
-    while (n--) {
-        if (states[n]) STATE_FREE(states[n]);
+    while (n) {
+        if (states[--n]) { STATE_FREE(states[n]); }
     }
 }
 
@@ -597,13 +577,13 @@ const char *async_strerror(async_error err) {
             return "UNKNOWN ERROR";
     }
 }
+
 void async_args_destructor(struct astate *state) {
-    event_loop->free(state->args);
+    free(state->args);
 }
-void async_run(struct astate *state) {
-    if(async_get_flag(event_loop, ASYNC_LOOP_FLAG_CLOSED)){
-        event_loop->init();
-    }
-    event_loop->run_until_complete(state);
+
+void async_run(struct astate *amain) {
+    event_loop->init();
+    event_loop->run_until_complete(amain);
     event_loop->close();
 }
