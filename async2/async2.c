@@ -28,6 +28,14 @@ SOFTWARE.
 
 #define ignored_  (void)
 
+#ifdef NDEBUG
+    #define ON_DEBUG(statement) \
+        (void) 0
+#else
+    #define ON_DEBUG(statement) \
+        do { statement } while (0)
+#endif
+
 /*
  * event loop member functions declaration
  */
@@ -92,96 +100,80 @@ const struct async_event_loop async_default_event_loop = {
 
 static struct async_event_loop *event_loop = &async_standard_event_loop_;
 
-const struct async_event_loop * const * const async_loop = (const struct async_event_loop * const * const) &event_loop;
-
-/* array is inspired by rxi's vec: https://github.com/rxi/vec */
-/* todo: this one relies on UB, backport to my port or use something completely different */
-static int async_arr_expand_(char **data, const size_t *len, size_t *capacity, size_t memsz, size_t n_memb) {
-    void *mem;
-    size_t n, needed;
-
-    needed = *len + n_memb;
-    if (needed > *capacity) {
-        n = (*capacity == 0) ? 1 : *capacity << 1;
-        while (needed > n) { /* Calculate power of 2 for new capacity */
-            n <<= 1;
-        }
-        mem = event_loop->realloc(*data, n * memsz);
-        if (mem == NULL) return 0;
-        *data = mem;
-        *capacity = n;
-    }
-    return 1;
-}
-
-
-static void async_arr_splice_(
-    char **data, const size_t *len, const size_t *capacity,
-    size_t memsz, size_t start, size_t count) {
-    (void) capacity;
-    memmove(*data + start * memsz,
-        *data + (start + count) * memsz,
-        (*len - start - count) * memsz);
-}
-
-#define async_arr_init(arr) \
-    (void)(memset((arr), 0, sizeof(*(arr))), (arr)->data = NULL)
-
-#define async_arr_destroy(arr)             \
-    (                                      \
-            event_loop->free((arr)->data), \
-            async_arr_init(arr)            \
-    )
-
-#define async_arr_push(arr, val)                                \
-    (                                                           \
-            async_arr_expand_(async_arr_unpack_(arr), 1)        \
-                    ? ((arr)->data[(arr)->length++] = (val), 1) \
-                    : 0                                         \
-    )
-
-#define async_arr_reserve(arr, n) \
-    async_arr_expand_(async_arr_unpack_(arr), n)
-
-#define async_arr_unpack_(arr) \
-    (char **) &(arr)->data, &(arr)->length, &(arr)->capacity, sizeof(*(arr)->data)
-
-#define async_arr_splice(arr, start, count)                          \
-    (                                                                \
-            async_arr_splice_(async_arr_unpack_(arr), start, count), \
-            (arr)->length -= (count)                                 \
-    )
-
-#define async_arr_pop(arr) \
-    (arr)->data[--(arr)->length]
+const struct async_event_loop * const * const async_loop_ptr = (const struct async_event_loop * const * const) &event_loop;
 
 static int async_all_(size_t n, struct astate *states[]) { /* Returns false if at least one state is NULL */
-    while (n) {
-        if (states[--n] == NULL) { return 0; }
+    while (n--) {
+        if (states[n] == NULL) { return 0; }
     }
     return 1;
 }
 
+/*
+ * this union will have the largest basic data type offset needed for its any element to be aligned,
+ * it's not guaranteed to work with extension types (like 128 bit integers), nor to be the same as alignof(max_align_t)
+ */
+
+typedef struct memblock_header {
+    union {
+/* some embedded compilers or the ones like C65 don't support floats */
+#if !defined ASYNC_NO_FLOATS
+        long double a;
+#endif
+#if defined __STDC_VERSION__ && __STDC_VERSION__ > 199901L
+        long long int b; /* long in modern compilers should be the same size and alignment as long long, but if we have c99, include it just in case */
+#endif
+        long int c;
+        size_t d;
+        void *e;
+        void (*f)(void);
+    } Align;
+
+    struct memblock_header *prev, *next;
+    void *ref;
+} memblock_header;
+
+
+#define MEMBLOCK_FREED     0xF3EE
+#define MEMBLOCK_ALLOC     0xBEEF
+#define MEMBLOCK_FREELATER 0xBAEE
+
+#define MEMBLOCK_HEADER_FREE(header)                                                                \
+    do {                                                                                            \
+        /* this assertion is unlikely to work because of how modern libs free memory */             \
+        assert((ignored_"Double free of async_alloc memory", (header)->Align.c != MEMBLOCK_FREED)); \
+        assert((ignored_"Given memory address wasn't allocated with async_alloc",                   \
+                (header)->Align.c == MEMBLOCK_ALLOC || (header)->Align.c == MEMBLOCK_FREELATER));   \
+        ON_DEBUG({                                                                                  \
+            (header)->Align.c = MEMBLOCK_FREED;                                                     \
+        });                                                                                         \
+        free((header)->ref);                                                                        \
+        event_loop->free(header);                                                                   \
+    } while (0)
+
 /* Free astate, its allocs and invalidate it completely */
-#define STATE_FREE(state)                                                     \
-    do {                                                                      \
-        if ((state)->_runner->destr) (state)->_runner->destr(state);          \
-        while ((state)->_allocs.length--) {                                   \
-            event_loop->free((state)->_allocs.data[(state)->_allocs.length]); \
-        }                                                                     \
-        async_arr_destroy(&(state)->_allocs);                                 \
-        event_loop->free(state);                                              \
+#define ASTATE_FREE(state)                                               \
+    do {                                                                 \
+        memblock_header *_header;                                        \
+        if ((state)->_runner->destr) {                                   \
+            (state)->_runner->destr(state);                              \
+        }                                                                \
+        _header = (state)->_allocs;                                      \
+        while (_header) {                                                \
+            memblock_header *_hnext = _header->next;                     \
+            MEMBLOCK_HEADER_FREE(_header);                               \
+            _header = _hnext;                                            \
+        }                                                                \
+        event_loop->free(state);                                         \
     } while (0)
 
 static void async_loop_append_(struct astate *state){
     struct async_event_loop *loop = event_loop;
-
     if (loop->n_tasks == 0) {
         loop->head = loop->tail = state;
     } else {
         loop->tail->_next = state;
         state->_prev = loop->tail;
-        state->_prev = NULL;
         loop->tail = state;
     }
     loop->n_tasks++;
@@ -190,13 +182,16 @@ static void async_loop_append_(struct astate *state){
 
 static void async_loop_remove_(struct astate *state){
     struct async_event_loop *loop = event_loop;
-    assert(loop->n_tasks != 0);
+    assert((ignored_"Loop is already empty, state was already removed or never added", loop->n_tasks != 0));
+    assert(state != NULL);
 
-    if (state == loop->tail) loop->tail = loop->tail->_prev;
+    if (state == loop->tail)
+        loop->tail = loop->tail->_prev;
     else if (state->_next)
         state->_next->_prev = state->_prev;
 
-    if (state == loop->head) loop->head = loop->head->_next;
+    if (state == loop->head)
+        loop->head = loop->head->_next;
     else if (state->_prev)
         state->_prev->_next = state->_next;
 
@@ -205,15 +200,15 @@ static void async_loop_remove_(struct astate *state){
 }
 
 
-static void async_loop_once_(){
+static void async_loop_once_(void){
     struct astate *state = event_loop->head;
 
-    while (state != NULL){
+    while (state){
         struct astate *next = state->_next;
 
         if(state->_refcnt == 0){
             async_loop_remove_(state);
-            STATE_FREE(state);
+            ASTATE_FREE(state);
         } else if (state->err != ASYNC_ECANCELLED && async_get_flag(state, ASYNC_TASK_FLAG_CANCELLED)){
             async_unset_flag(state, ASYNC_TASK_FLAG_CANCELLED);
             if(!async_is_done(state)){
@@ -236,6 +231,7 @@ static void async_loop_once_(){
 
 }
 
+/* todo: run forever loop */
 static void async_loop_run_forever_(void) {
     async_set_flag(event_loop, ASYNC_LOOP_FLAG_RUNNING);
 
@@ -247,12 +243,20 @@ static void async_loop_run_until_complete_(struct astate *amain) {
 
     async_set_flag(event_loop, ASYNC_LOOP_FLAG_RUNNING);
 
-    while (amain->_runner->coro(amain) != ASYNC_DONE) {
+    ASYNC_INCREF(amain);
+    event_loop->create_task(amain);
+
+    while (!async_is_done(amain)) {
         async_loop_once_();
     }
 
+    ASYNC_DECREF(amain);
+
     async_unset_flag(event_loop, ASYNC_LOOP_FLAG_RUNNING);
-    if (amain->_refcnt == 0) { STATE_FREE(amain); }
+    if (amain->_refcnt == 0) {
+        async_loop_remove_(amain);
+        ASTATE_FREE(amain);
+    }
 }
 
 static void async_loop_init_(void) {
@@ -318,7 +322,7 @@ struct astate *async_new_task_(const async_runner *runner, void *args) {
 
     state->_runner = runner;
     state->_child = NULL;
-    state->_allocs.data = NULL;
+    state->_allocs = NULL;
     state->_refcnt = 1; /* State has 1 reference set as function "owns" itself until exited or cancelled */
     /* state->_async_k = ASYNC_INIT; state is already ASYNC_INIT because calloc */
     state->_prev = state->_next = NULL;
@@ -327,15 +331,17 @@ struct astate *async_new_task_(const async_runner *runner, void *args) {
 
 void async_free_task_(struct astate *state) {
     if (state != NULL) {
-        STATE_FREE(state);
+        ASTATE_FREE(state);
     }
 }
 
 void async_free_tasks_(size_t n, struct astate *states[]) {
-    while (n) {
-        if (states[--n]) { STATE_FREE(states[n]); }
+    while (n--) {
+        if (states[n]) { ASTATE_FREE(states[n]); }
     }
 }
+
+/* todo: sync functions */
 
 #if 0
 typedef struct {
@@ -522,40 +528,77 @@ struct astate *async_wait_for(struct astate *child, double timeout) {
 
 #endif
 
+
+
+static void async_allocs_prepend_(struct astate *state, memblock_header *header){
+    header->prev = NULL;
+    header->next = state->_allocs;
+
+    if(state->_allocs){
+        memblock_header *head = state->_allocs;
+        head->prev = header;
+    }
+
+    state->_allocs = header;
+}
+
+static void async_allocs_remove_(struct astate *state, memblock_header *header) {
+    if(state->_allocs == header){
+        state->_allocs = header->next;
+    } else {
+        header->prev->next = header->next;
+    }
+
+    if(header->next){
+        header->next->prev = header->prev;
+    }
+}
+
 void *async_alloc_(struct astate *state, size_t size) {
-    void *mem;
-    if (state == NULL) { return NULL; }
-    mem = event_loop->malloc(size);
-    if (mem == NULL) { return NULL; }
-    if (!async_arr_push(&state->_allocs, mem)) {
-        event_loop->free(mem);
-        return NULL;
-    }
-    return mem;
+    memblock_header *header;
+    assert(state != NULL);
+
+    header = event_loop->malloc(sizeof(*header) + size);
+    if (header == NULL) { return NULL; }
+
+    header->ref = NULL;
+    ON_DEBUG({
+        header->Align.c = MEMBLOCK_ALLOC;
+    });
+
+    async_allocs_prepend_(state, header);
+    return header + 1;
 }
 
-int async_free_(struct astate *state, void *mem) {
-    size_t i;
-    void *obj;
+void async_free_(struct astate *state, void *ptr) {
+    memblock_header *header = (memblock_header *) ptr - 1; /* pointer element object after the bound is still valid */
+    if (ptr == NULL) { return; }
 
-    i = state->_allocs.length;
-    while (i--) {
-        obj = state->_allocs.data[i];
-        if (obj == mem) {
-            event_loop->free(obj);
-            async_arr_splice(&state->_allocs, i, 1);
-            return 1;
-        }
-    }
-    return 0;
+    assert((ignored_"List of allocs for this state is empty", state->_allocs != NULL));
+    assert((ignored_"Double free of async_alloc memory", header->Align.c != MEMBLOCK_FREED));
+
+    async_allocs_remove_(state, header);
+
+    MEMBLOCK_HEADER_FREE(header);
 }
 
-int async_free_later_(struct astate *state, void *mem) {
-    if (mem == NULL || !async_arr_push(&state->_allocs, mem)) return 0;
+int async_free_later_(struct astate *state, void *ptr) {
+    memblock_header *header;
+    if (ptr == NULL) { return 0; }
+
+    header = event_loop->malloc(sizeof(*header));
+    if (header == NULL) { return 0; }
+
+    header->ref = ptr;
+    ON_DEBUG({
+        header->Align.c = MEMBLOCK_FREELATER;
+    });
+
+    async_allocs_prepend_(state, header);
     return 1;
 }
 
-struct async_event_loop *async_get_event_loop(void) {
+const struct async_event_loop *async_get_event_loop(void) {
     return event_loop;
 }
 
@@ -568,11 +611,11 @@ const char *async_strerror(async_error err) {
         case ASYNC_OK:
             return "OK";
         case ASYNC_ENOMEM:
-            return "MEMORY ALLOCATION ERROR";
+            return "MEMORY ALLOCATION FAILED";
         case ASYNC_ECANCELLED:
-            return "COROUTINE WAS CANCELLED";
+            return "TASK WAS CANCELLED";
         case ASYNC_EINVAL_STATE:
-            return "INVALID STATE WAS PASSED TO COROUTINE";
+            return "INVALID STATE WAS PASSED TO RUNNER'S COROUTINE";
         default:
             return "UNKNOWN ERROR";
     }

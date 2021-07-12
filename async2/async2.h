@@ -52,9 +52,9 @@ SOFTWARE.
 
 #ifdef ASYNC_DEBUG
     #include <stdio.h> /* fprintf, stderr */
-    #define ASYNC_ZUTIL_ON_DEBUG_(what) (void)(what)
+    #define ASYNC_ZUTIL_ON_DEBUG_(expr) (void)(expr)
 #else
-    #define ASYNC_ZUTIL_ON_DEBUG_(what) (void)0
+    #define ASYNC_ZUTIL_ON_DEBUG_(expr) (void)0
 #endif
 
 /*
@@ -164,10 +164,9 @@ struct astate {
     const async_runner *_runner;
     struct astate *_child; /* child state used by fawait */
     struct astate *_prev, *_next;
-    struct { void **data; size_t length, capacity; } _allocs; /* array of memory blocks allocated by async_alloc and managed by the event loop */
-
+    void *_allocs;
     #ifdef ASYNC_DEBUG
-    const char *_debug_taskname; /* must never be explicitly initialized */
+    const char *_debug_taskname_; /* must never be explicitly used */
     #endif
 };
 
@@ -209,7 +208,7 @@ typedef struct async_event_loop {
 extern const struct async_event_loop async_default_event_loop;
 
 /* todo: direct RO access instead of getter? */
-extern const struct async_event_loop * const * const async_loop;
+extern const struct async_event_loop * const * const async_loop_ptr;
 
 /* manual ownership control */
 #define ASYNC_INCREF(coro) (void) ((coro)->_refcnt++)
@@ -232,22 +231,24 @@ extern const struct async_event_loop * const * const async_loop;
         ASYNC_ZUTIL_ON_DEBUG_(fprintf(stderr, "<ADEBUG> Entered '%s'\n", __func__));  \
         switch (_async_ctx->_async_k) {                                               \
             case ASYNC_INIT:                                                          \
-                ASYNC_ZUTIL_ON_DEBUG_((_async_ctx->_debug_taskname = __func__, fprintf(stderr, "<ADEBUG> Begin '%s'\n", __func__)))
+                ASYNC_ZUTIL_ON_DEBUG_((_async_ctx->_debug_taskname_ = __func__, fprintf(stderr, "<ADEBUG> Begin '%s'\n", __func__)))
 
 /*
  * Mark the end of a async subroutine
  */
-#define async_end                                                                                                                  \
-        async_exit;                                                                                                                \
-        /* fall through */                                                                                                         \
-        case ASYNC_DONE:                                                                                                           \
-            return ASYNC_DONE;                                                                                                     \
-        default:                                                                                                                   \
-            async_errno = ASYNC_EINVAL_STATE;                                                                                      \
-        ASYNC_ZUTIL_ON_DEBUG_(fprintf(stderr, "<ADEBUG> WARNING: %s: %s(%d)\n", async_strerror(async_errno), __FILE__, __LINE__)); \
-            return ASYNC_DONE;                                                                                                     \
-        } /* close async_begin's switch */                                                                                         \
-    } /* close async body block */                                                                                                 \
+#define async_end                                                                                                  \
+        async_exit;                                                                                                \
+        /* fall through */                                                                                         \
+        case ASYNC_DONE:                                                                                           \
+            return ASYNC_DONE;                                                                                     \
+        default:                                                                                                   \
+            async_errno = ASYNC_EINVAL_STATE;                                                                      \
+            ASYNC_ZUTIL_ON_DEBUG_(                                                                                 \
+                fprintf(stderr, "<ADEBUG> WARNING: %s: %s(%d)\n", async_strerror(async_errno), __FILE__, __LINE__) \
+            );                                                                                                     \
+            return ASYNC_DONE;                                                                                     \
+        } /* close async_begin's switch */                                                                         \
+    } /* close async body block */                                                                                 \
     (void)0
 
 /*
@@ -319,15 +320,22 @@ extern const struct async_event_loop * const * const async_loop;
 #define async_new(arunner, args) async_new_task_((arunner), (args))
 
 /*
- * Create task from task
+ * Schedule task from new state object
  */
-#define async_create_task(task) (async_get_event_loop()->create_task(task))
+#ifdef ASYNC_DIRECT_LOOP
+    #define async_create_task(task) ((*async_loop_ptr)->create_task(task))
+#else
+    #define async_create_task(task) (async_get_event_loop()->create_task(task))
+#endif
 
 /*
  * Create tasks from array of states
  */
-#define async_create_tasks(n, tasks) (async_get_event_loop()->create_tasks(n, tasks))
-
+#ifdef ASYNC_DIRECT_LOOP
+    #define async_create_tasks(n, tasks) ((*async_loop_ptr)->create_tasks(n, tasks))
+#else
+    #define async_create_tasks(n, tasks) (async_get_event_loop()->create_tasks(n, tasks))
+#endif
 /*
  * Get async_error code for current execution state. Can be used to check for errors after fawait()
  */
@@ -381,7 +389,7 @@ struct astate *async_sleep(double delay);
  */
 struct astate *async_wait_for(struct astate *child, double timeout);
 
-struct async_event_loop *async_get_event_loop(void);
+const struct async_event_loop *async_get_event_loop(void);
 
 void async_set_event_loop(struct async_event_loop *);
 
@@ -400,9 +408,9 @@ void async_free_tasks_(size_t n, struct astate *states[]);
 
 void *async_alloc_(struct astate *state, size_t size);
 
-int async_free_(struct astate *state, void *mem);
+void async_free_(struct astate *state, void *ptr);
 
-int async_free_later_(struct astate *state, void *mem);
+int async_free_later_(struct astate *state, void *ptr);
 
 const char *async_strerror(async_error err);
 
