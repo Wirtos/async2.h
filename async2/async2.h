@@ -69,9 +69,9 @@ typedef enum {
     ASYNC_ECANCELLED = 42, ASYNC_EINVAL_STATE
 } async_error;
 
-#define async_set_flag(obj, flag)   (void)((obj)->_flags |=  (flag))
-#define async_unset_flag(obj, flag) (void)((obj)->_flags &= ~(flag))
-#define async_get_flag(obj, flag)         ((obj)->_flags &   (flag))
+#define async_set_flag(obj, flag)   (void) ((obj)->_flags |=  (flag))
+#define async_unset_flag(obj, flag) (void) ((obj)->_flags &= ~(flag))
+#define async_get_flag(obj, flag)          ((obj)->_flags &   (flag))
 
 typedef enum {
     ASYNC_TASK_FLAG_SCHEDULED = 1u << 0,
@@ -83,7 +83,7 @@ typedef enum {
     ASYNC_LOOP_FLAG_CLOSED  = 1u << 1
 } async_loop_flags;
 
-typedef struct astate *s_astate;
+typedef struct astate *p_astate;
 
 
 /*
@@ -104,7 +104,7 @@ typedef void (*AsyncDestructorCallback)(struct astate *);
 
 
 /*
- * Initializers for Async_Runner::sizes, everything is computed at compile time so
+ * Initializers for Async_Runner::sizes
  */
 #define ASYNC_RUNNER_PURE_INIT() \
     {                            \
@@ -207,31 +207,38 @@ typedef struct async_event_loop {
  */
 extern const struct async_event_loop async_default_event_loop;
 
-/* todo: direct RO access instead of getter? */
 extern const struct async_event_loop * const * const async_loop_ptr;
 
+#ifdef ASYNC_DIRECT_LOOP
+    #undef ASYNC_DIRECT_LOOP
+    #define ASYNC_DIRECT_LOOP (*async_loop_ptr)
+#else
+    #define ASYNC_DIRECT_LOOP (async_get_event_loop())
+#endif
+
 /* manual ownership control */
-#define ASYNC_INCREF(coro) (void) ((coro)->_refcnt++)
+#define ASYNC_INCREF(coro)  (void) ((coro)->_refcnt++)
 
-#define ASYNC_DECREF(coro) (void) ((coro)->_refcnt--)
+#define ASYNC_DECREF(coro)  (void) ((coro)->_refcnt--)
 
-#define ASYNC_XINCREF(coro) (void)((coro) ? ASYNC_INCREF(coro) : 0)
+#define ASYNC_XINCREF(coro) (void) ((coro) ? ASYNC_INCREF(coro) : (void)0)
 
-#define ASYNC_XDECREF(coro) (void)((coro) ? ASYNC_DECREF(coro) : 0)
-
+#define ASYNC_XDECREF(coro) (void) ((coro) ? ASYNC_DECREF(coro) : (void)0)
 
 /*
  * Mark the start of an async subroutine
  * Unknown continuation values now set async_errno to ASYNC_EINVAL_STATE.
  */
 
-#define async_begin(st)                                                               \
-    { /* beginning of the block in case user has some statements before async body */ \
-        struct astate *_async_ctx = st;                                               \
-        ASYNC_ZUTIL_ON_DEBUG_(fprintf(stderr, "<ADEBUG> Entered '%s'\n", __func__));  \
-        switch (_async_ctx->_async_k) {                                               \
-            case ASYNC_INIT:                                                          \
-                ASYNC_ZUTIL_ON_DEBUG_((_async_ctx->_debug_taskname_ = __func__, fprintf(stderr, "<ADEBUG> Begin '%s'\n", __func__)))
+#define async_begin(st)                                                                                            \
+    { /* beginning of the block in case user has some statements before async body */                              \
+        struct astate *_async_ctx_ = st;                                                                           \
+        ASYNC_ZUTIL_ON_DEBUG_(fprintf(stderr, "<ADEBUG> Entered '%s'\n", __func__));                               \
+        switch (_async_ctx_->_async_k) {                                                                           \
+            case ASYNC_INIT:                                                                                       \
+                ASYNC_ZUTIL_ON_DEBUG_(                                                                             \
+                    (_async_ctx_->_debug_taskname_ = __func__, fprintf(stderr, "<ADEBUG> Begin '%s'\n", __func__)) \
+                );
 
 /*
  * Mark the end of a async subroutine
@@ -240,6 +247,12 @@ extern const struct async_event_loop * const * const async_loop_ptr;
         async_exit;                                                                                                \
         /* fall through */                                                                                         \
         case ASYNC_DONE:                                                                                           \
+            ASYNC_ZUTIL_ON_DEBUG_(                                                                                 \
+                fprintf(                                                                                           \
+                    stderr, "<ADEBUG> WARNING: task is already done, but its coro was called: %s(%d)\n",           \
+                    __FILE__, __LINE__                                                                             \
+                )                                                                                                  \
+            );                                                                                                     \
             return ASYNC_DONE;                                                                                     \
         default:                                                                                                   \
             async_errno = ASYNC_EINVAL_STATE;                                                                      \
@@ -262,40 +275,45 @@ extern const struct async_event_loop * const * const async_loop_ptr;
  * Continuation state is now callee-saved like protothreads which avoids
  * duplicate writes from the caller-saved design.
  */
-#define await_while(cond)                                                                                            \
-    do {                                                                                                             \
-        _async_ctx->_async_k = __LINE__; /* fall through */ case __LINE__:                                           \
-        if (cond) {                                                                                                  \
-            ASYNC_ZUTIL_ON_DEBUG_(                                                                                   \
-                fprintf(stderr, "<ADEBUG> Awaited in '%s' %s(%d)\n", __func__, __FILE__, __LINE__)                   \
-            );                                                                                                       \
-            return ASYNC_CONT;                                                                                       \
-        }                                                                                                            \
+#define await_while(cond)                                                                          \
+    do {                                                                                           \
+        _async_ctx_ ->_async_k = __LINE__; /* fall through */ case __LINE__:                       \
+        if (cond) {                                                                                \
+            ASYNC_ZUTIL_ON_DEBUG_(                                                                 \
+                fprintf(stderr, "<ADEBUG> Awaited in '%s' %s(%d)\n", __func__, __FILE__, __LINE__) \
+            );                                                                                     \
+            async_yield;                                                                           \
+        }                                                                                          \
     } while (0)
 
 /*
  * Wait until the condition succeeds
  */
-#define await(cond) await_while(!(cond))
+#define await_until(cond) await_while(!(cond))
 
 /*
  * Yield execution
  */
-#define async_yield                                                                                                 \
-    do {                                                                                                            \
-        ASYNC_ZUTIL_ON_DEBUG_(fprintf(stderr, "<ADEBUG> Yielded in '%s' %s(%d)\n", __func__, __FILE__, __LINE__));  \
-        _async_ctx->_async_k = __LINE__; return ASYNC_CONT; /* fall through */ case __LINE__: (void) 0;             \
+#define async_yield                                                                                      \
+    do {                                                                                                 \
+        ASYNC_ZUTIL_ON_DEBUG_(                                                                           \
+            fprintf(stderr, "<ADEBUG> Yielded in '%s' %s(%d)\n", __func__, __FILE__, __LINE__)           \
+        );                                                                                               \
+        _async_ctx_ ->_async_k = __LINE__; return ASYNC_CONT; /* fall through */ case __LINE__:          \
+        (void)0;                                                                                         \
     } while (0)
 
 /*
  * Exit the current async subroutine
  */
-#define async_exit                                                                                                         \
-    return (                                                                                                               \
-        _async_ctx->_async_k = ASYNC_DONE,                                                                                 \
-        ASYNC_DECREF(_async_ctx),                                                                                          \
-        ASYNC_ZUTIL_ON_DEBUG_(fprintf(stderr, "<ADEBUG> Exited from '%s' %s(%d)\n", __func__, __FILE__,  __LINE__)),       \
-        ASYNC_DONE                                                                                                         \
+#define async_exit                                                                               \
+    return (                                                                                     \
+        _async_ctx_ ->_async_k = ASYNC_DONE,                                                     \
+        ASYNC_DECREF(_async_ctx_),                                                               \
+        ASYNC_ZUTIL_ON_DEBUG_(                                                                   \
+            fprintf(stderr, "<ADEBUG> Exited from '%s' %s(%d)\n", __func__, __FILE__,  __LINE__) \
+        ),                                                                                       \
+        ASYNC_DONE                                                                               \
     )
 
 /*
@@ -322,50 +340,46 @@ extern const struct async_event_loop * const * const async_loop_ptr;
 /*
  * Schedule task from new state object
  */
-#ifdef ASYNC_DIRECT_LOOP
-    #define async_create_task(task) ((*async_loop_ptr)->create_task(task))
-#else
-    #define async_create_task(task) (async_get_event_loop()->create_task(task))
-#endif
+
+#define async_create_task(task) (ASYNC_DIRECT_LOOP->create_task(task))
+
 
 /*
  * Create tasks from array of states
  */
-#ifdef ASYNC_DIRECT_LOOP
-    #define async_create_tasks(n, tasks) ((*async_loop_ptr)->create_tasks(n, tasks))
-#else
-    #define async_create_tasks(n, tasks) (async_get_event_loop()->create_tasks(n, tasks))
-#endif
+
+#define async_create_tasks(n, tasks) ((ASYNC_DIRECT_LOOP)->create_tasks(n, tasks))
+
 /*
  * Get async_error code for current execution state. Can be used to check for errors after fawait()
  */
-#define async_errno (_async_ctx->err)
+#define async_errno (_async_ctx_->err)
 
 /*
  * Create task and wait until it succeeds. Resets async_errno and sets it.
  */
 
-#define fawait(task)                                                  \
-    do {                                                              \
-        if ((_async_ctx->_child = async_create_task(task)) != NULL) { \
-            ASYNC_INCREF(_async_ctx->_child);                         \
-            async_yield;                                              \
-            async_errno = _async_ctx->_child->err;                    \
-            ASYNC_DECREF(_async_ctx->_child);                         \
-            _async_ctx->_child = NULL;                                \
-        } else {                                                      \
-            async_errno = ASYNC_ENOMEM;                               \
-        }                                                             \
+#define await(task)                                                    \
+    do {                                                               \
+        if ((_async_ctx_->_child = async_create_task(task)) != NULL) { \
+            ASYNC_INCREF(_async_ctx_->_child);                         \
+            async_yield;                                               \
+            async_errno = _async_ctx_->_child->err;                    \
+            ASYNC_DECREF(_async_ctx_->_child);                         \
+            _async_ctx_->_child = NULL;                                \
+        } else {                                                       \
+            async_errno = ASYNC_ENOMEM;                                \
+        }                                                              \
     } while (0)
 /*
  * Allocate memory that'll be freed automatically after async function ends.
  * Allows to avoid setting a separate destructor
  */
-#define async_alloc(size) async_alloc_(_async_ctx, size)
+#define async_alloc(size) async_alloc_(_async_ctx_, size)
 
-#define async_free(ptr) async_free_(_async_ctx, ptr)
+#define async_free(ptr) async_free_(_async_ctx_, ptr)
 
-#define async_free_later(ptr) async_free_later_(_async_ctx, ptr)
+#define async_free_later(ptr) async_free_later_(_async_ctx_, ptr)
 
 /*
  * Run few variadic tasks in parallel
