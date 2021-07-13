@@ -321,11 +321,15 @@ struct astate *async_new_task_(const async_runner *runner, void *args) {
                     : args;
 
     state->_runner = runner;
-    state->_child = NULL;
-    state->_allocs = NULL;
     state->_refcnt = 1; /* State has 1 reference set as function "owns" itself until exited or cancelled */
     /* state->_async_k = ASYNC_INIT; state is already ASYNC_INIT because calloc */
+
+#if !defined ASYNC_NULL_ZERO_BITS
+    /* pointer variables aren't guaranteed to be represented with all zero bits, assign them explicitly */
     state->_prev = state->_next = NULL;
+    state->_child = NULL;
+    state->_allocs = NULL;
+#endif
     return state;
 }
 
