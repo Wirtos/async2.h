@@ -1,5 +1,5 @@
 [![Build Status](https://travis-ci.com/Wirtos/async2.h.svg?branch=master)](https://travis-ci.com/Wirtos/async2.h)
-# async2.h - asynchronous, stackful subroutines
+# async2.h - asynchronous, stackful subroutines \[alpha, currently in active-ish development\]
 Taking inspiration from protothreads, async.h, coroutines.h and async/await as found in python 
 this is an async/await/fawait/event loop implementation for C based on Duff's device.
 
@@ -10,6 +10,9 @@ this is an async/await/fawait/event loop implementation for C based on Duff's de
 3. It's not dependent on an OS.
 4. It's a bit simpler to understand than other implementations as async state/stack management is fully handled by the lib.
 5. You can't preserve local variables across function calls, but the library provides a way to store them persistently (see [practices](#practices))
+
+# The API will probably be deprecated because I'm currently rewriting a lot of parts from scratch and taking a different approach for state callbacks.
+# Don't use the current code to learn good practices or rely on it a lot since stuff might change A LOT.
 
 # API
 
