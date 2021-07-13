@@ -41,7 +41,7 @@ SOFTWARE.
  */
 static struct astate *async_loop_create_task_(struct astate *state);
 
-static struct astate **async_loop_create_tasks_(size_t n, struct astate **states);
+static struct astate **async_loop_create_tasks_(size_t n, struct astate * const states[]);
 
 static void async_loop_init_(void);
 
@@ -53,7 +53,7 @@ static void async_loop_close_(void);
 
 static void async_loop_stop_(void);
 
-static int async_all_(size_t n, struct astate *states[]);
+static int async_all_(size_t n, struct astate * const states[]);
 
 /* todo: optionally switch to arena allocator? */
 
@@ -102,7 +102,7 @@ static struct async_event_loop *event_loop = &async_standard_event_loop_;
 
 const struct async_event_loop * const * const async_loop_ptr = (const struct async_event_loop * const * const) &event_loop;
 
-static int async_all_(size_t n, struct astate *states[]) { /* Returns false if at least one state is NULL */
+static int async_all_(size_t n, struct astate * const states[]) { /* Returns false if at least one state is NULL */
     while (n--) {
         if (states[n] == NULL) { return 0; }
     }
@@ -286,7 +286,7 @@ static struct astate *async_loop_create_task_(struct astate *state) {
 }
 
 
-static struct astate **async_loop_create_tasks_(size_t n, struct astate **states) {
+static struct astate **async_loop_create_tasks_(size_t n, struct astate * const states[]) {
     size_t i;
     if (!(states && async_all_(n, states))) {
         return NULL;
@@ -298,7 +298,7 @@ static struct astate **async_loop_create_tasks_(size_t n, struct astate **states
             async_set_scheduled(states[i]);
         }
     }
-    return states;
+    return (struct astate **)states;
 }
 
 struct astate *async_new_task_(const async_runner *runner, void *args) {
@@ -315,7 +315,7 @@ struct astate *async_new_task_(const async_runner *runner, void *args) {
 
     state->args = (runner->sizes.args_size)
                     ? (
-                       assert((ignored_"Pointer to args must be non-NULL", args)), /* todo: should be a static assertion? */
+                       assert((ignored_"Pointer to args must be non-NULL", args)),
                        memcpy(((char *) state) + runner->sizes.args_offset, args, runner->sizes.args_size)
                       )
                     : args;
@@ -339,162 +339,72 @@ void async_free_task_(struct astate *state) {
     }
 }
 
-void async_free_tasks_(size_t n, struct astate *states[]) {
+void async_free_tasks_(size_t n, struct astate * const states[]) {
     while (n--) {
         if (states[n]) { ASTATE_FREE(states[n]); }
     }
 }
 
-/* todo: sync functions */
+struct gather_args {
+    struct astate **states;
+    size_t n;
+};
 
-#if 0
-typedef struct {
-    async_arr_t(struct astate *) arr_coros;
-} gathered_stack;
-
-static void async_gatherer_cancel(struct astate *state) {
-    gathered_stack *locals = state->locals;
-    size_t i;
-    for (i = 0; i < locals->arr_coros.length; i++) {
-        if (!locals->arr_coros.data[i]) continue;
-        ASYNC_DECREF(locals->arr_coros.data[i]);
-        async_cancel(locals->arr_coros.data[i]);
+static async gather_coro(struct astate *st) {
+    struct gather_args *arg = st->args;
+    async_begin(st);
+    while (arg->n--) {
+        await(arg->states[arg->n]);
+        ASYNC_XDECREF(arg->states[arg->n]);
     }
+    async_end;
 }
 
-static async async_gatherer(struct astate *state) {
-    gathered_stack *locals = state->locals;
-    size_t i;
-    struct astate *child;
-    async_begin(state);
-            while (1) {
-                for (i = 0; i < locals->arr_coros.length; i++) {
-                    child = locals->arr_coros.data[i];
-                    if (!child) continue;
-                    if (!async_done(child)) {
-                        goto cont;
-                    } else { /* NULL coroutine in the list of tracked coros */
-                        ASYNC_DECREF(child);
-                        locals->arr_coros.data[i] = NULL;
-                    }
-                }
-                break;
-                cont :
-                {
-                    async_yield;
-                }
-            }
-    async_end;
+struct astate *async_gather(size_t n, struct astate * const states[]) {
+    static const async_runner gather_runner = {
+        gather_coro, NULL,
+        ASYNC_RUNNER_ARGS_INIT(struct gather_args)};
+    struct gather_args args;
+    args.states = (struct astate **) states;
+    args.n = n;
+    while (n--) {
+        async_create_task(states[n]);
+        ASYNC_XINCREF(states[n]);
+    }
+    return async_create_task(async_new(&gather_runner, &args));
+}
+
+static void vgather_destr(struct astate *st) {
+    struct gather_args *arg = st->args;
+    event_loop->free(arg->states);
 }
 
 struct astate *async_vgather(size_t n, ...) {
-    va_list v_args;
-    gathered_stack *stack;
-    struct astate *state;
-    size_t i;
+    static const async_runner vgather_runner = {
+        gather_coro, vgather_destr,
+        ASYNC_RUNNER_ARGS_INIT(struct gather_args)};
+    struct gather_args args;
+    va_list va_args;
 
-    ASYNC_PREPARE_NOARGS(async_gatherer, state, gathered_stack, async_gatherer_cancel, fail);
+    args.states = event_loop->malloc(sizeof(*args.states) * n);
+    if (!args.states) return NULL;
+    args.n = n;
 
-    stack = state->locals;
-    async_arr_init(&stack->arr_coros);
-    if (!async_arr_reserve(&stack->arr_coros, n) || !async_free_later_(state, stack->arr_coros.data)) {
-        goto fail;
+    va_start(va_args, n);
+    while (n--) {
+        args.states[n] = async_create_task(va_arg(va_args, struct astate *));
+        ASYNC_XINCREF(args.states[n]);
     }
-
-        va_start(v_args, n);
-    for (i = 0; i < n; i++) {
-        stack->arr_coros.data[i] = va_arg(v_args, struct astate *);
-    }
-        va_end(v_args);
-    stack->arr_coros.length = n;
-    if (!async_create_tasks(n, stack->arr_coros.data)) {
-        goto fail;
-    }
-    for (i = 0; i < n; i++) {
-        ASYNC_INCREF(stack->arr_coros.data[i]);
-    }
-    return state;
-
-    fail:
-    if (state) {
-        async_arr_destroy(&stack->arr_coros);
-        STATE_FREE(state);
-    }
-        va_start(v_args, n);
-    for (i = 0; i < n; i++) {
-        state = va_arg(v_args, struct astate *);
-        if (state) STATE_FREE(state);
-    }
-        va_end(v_args);
-    return NULL;
+    va_end(va_args);
+    return async_create_task(async_new(&vgather_runner, &args));
 }
 
-struct astate *async_gather(size_t n, struct astate **states) {
-    struct astate *state;
-    gathered_stack *stack;
-    size_t i;
-
-    ASYNC_PREPARE_NOARGS(async_gatherer, state, gathered_stack, async_gatherer_cancel, fail);
-    stack = state->locals;
-    stack->arr_coros.capacity = n;
-    stack->arr_coros.length = n;
-    stack->arr_coros.data = states;
-    if (!async_create_tasks(n, states)) {
-        STATE_FREE(state);
-        return NULL;
-    }
-    for (i = 0; i < n; i++) {
-        ASYNC_INCREF(stack->arr_coros.data[i]);
-    }
-    return state;
-    fail:
-    return NULL;
-}
-
-typedef struct {
-    double sec;
-    clock_t start;
-} sleeper_stack;
-
-static async async_sleeper(struct astate *state) {
-    sleeper_stack *locals = state->locals;
-    async_begin(state);
-            locals->start = clock();
-            await_while((double) (clock() - locals->start) / CLOCKS_PER_SEC < locals->sec);
-    async_end;
-}
-
-struct astate *async_sleep(double delay) {
-    struct astate *state;
-    sleeper_stack *stack;
-    if (delay == 0) {
-        ASYNC_PREPARE_NOARGS(async_yielder, state, ASYNC_NONE, NULL, fail);
-    } else {
-        ASYNC_PREPARE_NOARGS(async_sleeper, state, sleeper_stack, NULL, fail);
-        stack = state
-            ->locals; /* Yet another predefined locals trick for mere optimisation, use async_alloc_ in real adapter functions instead. */
-        stack->sec = delay;
-    }
-    return state;
-    fail:
-    return NULL;
-}
-
+#if 0
+/* todo: any time-related operations require a separate heap queue in order to be efficient */
 typedef struct {
     double sec;
     clock_t start;
 } waiter_stack;
-
-static void async_waiter_cancel(struct astate *state) {
-    struct astate *child = state->args;
-    if (child == NULL) return;
-    if (async_create_task(child)) {
-        if (!async_done(child)) {
-            async_cancel(child);
-        }
-        ASYNC_DECREF(child);
-    }
-}
 
 static async async_waiter(struct astate *state) {
     waiter_stack *locals = state->locals;

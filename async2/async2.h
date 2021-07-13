@@ -180,7 +180,7 @@ typedef struct async_event_loop {
 
     struct astate *(*create_task)(struct astate *state);
 
-    struct astate **(*create_tasks)(size_t n, struct astate **states);
+    struct astate **(*create_tasks)(size_t n, struct astate * const states[]);
 
     void (*run_forever)(void);
 
@@ -277,8 +277,7 @@ extern const struct async_event_loop * const * const async_loop_ptr;
  */
 #define await_while(cond)                                                                          \
     do {                                                                                           \
-        _async_ctx_ ->_async_k = __LINE__; /* fall through */ case __LINE__:                       \
-        if (cond) {                                                                                \
+        while (cond) {                                                                             \
             ASYNC_ZUTIL_ON_DEBUG_(                                                                 \
                 fprintf(stderr, "<ADEBUG> Awaited in '%s' %s(%d)\n", __func__, __FILE__, __LINE__) \
             );                                                                                     \
@@ -351,7 +350,7 @@ extern const struct async_event_loop * const * const async_loop_ptr;
 #define async_create_tasks(n, tasks) ((ASYNC_DIRECT_LOOP)->create_tasks(n, tasks))
 
 /*
- * Get async_error code for current execution state. Can be used to check for errors after fawait()
+ * Get async_error code for current execution state. Can be used to check for errors after await()
  */
 #define async_errno (_async_ctx_->err)
 
@@ -391,7 +390,7 @@ struct astate *async_vgather(size_t n, ...);
  * Arr must not be freed before this task is done or cancelled.
  * arr will be modified inside the task, so pass a copy if you need original array to be unchanged.
  */
-struct astate *async_gather(size_t n, struct astate **states);
+struct astate *async_gather(size_t n, struct astate * const states[]);
 
 /*
  * Block for `delay` seconds
@@ -418,7 +417,7 @@ void async_args_destructor(struct astate *state);
 
 void async_free_task_(struct astate *state);
 
-void async_free_tasks_(size_t n, struct astate *states[]);
+void async_free_tasks_(size_t n, struct astate * const states[]);
 
 void *async_alloc_(struct astate *state, size_t size);
 
