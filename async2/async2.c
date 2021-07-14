@@ -90,17 +90,18 @@ static void *async_loop_calloc_(size_t count, size_t size){
     0
 
 /* Init default event loop, custom event loop should create own initializer instead. */
-static struct async_event_loop async_standard_event_loop_ = {
+static struct async_event_loop async_default_event_loop_ = {
     STD_EVENT_LOOP_INIT
 };
 
-const struct async_event_loop async_default_event_loop = {
+static const struct async_event_loop async_default_event_loop_copy_ = {
     STD_EVENT_LOOP_INIT
 };
 
-static struct async_event_loop *event_loop = &async_standard_event_loop_;
+static struct async_event_loop *event_loop = &async_default_event_loop_;
 
 const struct async_event_loop * const * const async_loop_ptr = (const struct async_event_loop * const * const) &event_loop;
+
 
 static int async_all_(size_t n, struct astate * const states[]) { /* Returns false if at least one state is NULL */
     while (n--) {
@@ -517,7 +518,13 @@ const struct async_event_loop *async_get_event_loop(void) {
 }
 
 void async_set_event_loop(struct async_event_loop *loop) {
-    event_loop = loop;
+    assert(!event_loop || async_get_flag(event_loop, ASYNC_LOOP_FLAG_RUNNING));
+    if(loop != NULL){
+        event_loop = loop;
+    } else {
+        memcpy(&async_default_event_loop_, &async_default_event_loop_copy_, sizeof(async_default_event_loop_));
+        event_loop = &async_default_event_loop_;
+    }
 }
 
 const char *async_strerror(async_error err) {

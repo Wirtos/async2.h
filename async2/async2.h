@@ -201,12 +201,6 @@ typedef struct async_event_loop {
     async_loop_flags _flags;
 } async_event_loop;
 
-/*
- * you can't use this variable directly to set an event loop,
- * it exists so you could always copy it into a new loop thus making it work just like default one (basically a copy constructor)
- */
-extern const struct async_event_loop async_default_event_loop;
-
 extern const struct async_event_loop * const * const async_loop_ptr;
 
 #ifdef ASYNC_DIRECT_LOOP
