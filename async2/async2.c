@@ -153,19 +153,19 @@ typedef struct memblock_header {
     } while (0)
 
 /* Free astate, its allocs and invalidate it completely */
-#define ASTATE_FREE(state)                                               \
-    do {                                                                 \
-        memblock_header *_header;                                        \
-        if ((state)->_runner->destr) {                                   \
-            (state)->_runner->destr(state);                              \
-        }                                                                \
-        _header = (state)->_allocs;                                      \
-        while (_header) {                                                \
-            memblock_header *_hnext = _header->next;                     \
-            MEMBLOCK_HEADER_FREE(_header);                               \
-            _header = _hnext;                                            \
-        }                                                                \
-        event_loop->free(state);                                         \
+#define ASTATE_FREE(state)                           \
+    do {                                             \
+        memblock_header *_header;                    \
+        if ((state)->_runner->destr) {               \
+            (state)->_runner->destr(state);          \
+        }                                            \
+        _header = (state)->_allocs;                  \
+        while (_header) {                            \
+            memblock_header *_hnext = _header->next; \
+            MEMBLOCK_HEADER_FREE(_header);           \
+            _header = _hnext;                        \
+        }                                            \
+        event_loop->free(state);                     \
     } while (0)
 
 /* prepend is used because we don't want tasks to run in the same loop they were added */
@@ -357,6 +357,7 @@ static async gather_coro(struct astate *st) {
     async_begin(st);
     while (arg->n--) {
         await(arg->states[arg->n]);
+        async_errno = ASYNC_OK;
         ASYNC_XDECREF(arg->states[arg->n]);
     }
     async_end;
