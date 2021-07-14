@@ -168,14 +168,15 @@ typedef struct memblock_header {
         event_loop->free(state);                                         \
     } while (0)
 
-static void async_loop_append_(struct astate *state){
+/* prepend is used because we don't want tasks to run in the same loop they were added */
+static void async_loop_prepend_(struct astate *state){
     struct async_event_loop *loop = event_loop;
     if (loop->n_tasks == 0) {
         loop->head = loop->tail = state;
     } else {
-        loop->tail->_next = state;
-        state->_prev = loop->tail;
-        loop->tail = state;
+        loop->head->_prev = state;
+        state->_next = loop->head;
+        loop->head = state;
     }
     loop->n_tasks++;
 }
@@ -200,36 +201,21 @@ static void async_loop_remove_(struct astate *state){
     loop->n_tasks--;
 }
 
-
-static void async_loop_once_(void){
+static void async_loop_once_(void) {
     struct astate *state = event_loop->head;
 
-    while (state){
+    while (state) {
         struct astate *next = state->_next;
 
-        if(state->_refcnt == 0){
+        if (state->_refcnt == 0) {
             async_loop_remove_(state);
             ASTATE_FREE(state);
-        } else if (state->err != ASYNC_ECANCELLED && async_get_flag(state, ASYNC_TASK_FLAG_CANCELLED)){
-            async_unset_flag(state, ASYNC_TASK_FLAG_CANCELLED);
-            if(!async_is_done(state)){
-                ASYNC_DECREF(state);
-            }
-            if(state->_child){
-                ASYNC_DECREF(state->_child);
-                async_cancel(state->_child);
-            }
-            state->err = ASYNC_ECANCELLED;
-            state->_async_k = ASYNC_DONE;
-            /* check if refcount is 0 now */
-            continue;
-        } else if (!async_is_done(state) && (!state->_child || async_is_done(state->_child))){
+        } else if (!async_is_done(state) && (!state->_child || async_is_done(state->_child))) {
+            /* no awaited child or child is done, run parent */
             state->_runner->coro(state);
         }
-
         state = next;
     }
-
 }
 
 /* todo: run forever loop */
@@ -280,7 +266,7 @@ static struct astate *async_loop_create_task_(struct astate *state) {
     if (state == NULL) { return NULL; }
 
     if (!async_is_scheduled(state)) {
-        async_loop_append_(state);
+        async_loop_prepend_(state);
         async_set_scheduled(state);
     }
     return state;
@@ -295,7 +281,7 @@ static struct astate **async_loop_create_tasks_(size_t n, struct astate * const 
 
     for (i = 0; i < n; i++) {
         if (!async_is_scheduled(states[i])) {
-            async_loop_append_(states[i]);
+            async_loop_prepend_(states[i]);
             async_set_scheduled(states[i]);
         }
     }
@@ -351,6 +337,21 @@ struct gather_args {
     size_t n;
 };
 
+
+static int gather_cancel(struct astate *st){
+    struct gather_args *arg = st->args;
+    size_t n = arg->n;
+
+    /* remove ownership and cancel child functions left */
+    if(n != (size_t)-1){
+        while(n--){
+            async_cancel(arg->states[n]);
+            ASYNC_XDECREF(arg->states[n]);
+        }
+    }
+    return 1;
+}
+
 static async gather_coro(struct astate *st) {
     struct gather_args *arg = st->args;
     async_begin(st);
@@ -363,7 +364,7 @@ static async gather_coro(struct astate *st) {
 
 struct astate *async_gather(size_t n, struct astate * const states[]) {
     static const async_runner gather_runner = {
-        gather_coro, NULL,
+        gather_coro, NULL, gather_cancel,
         ASYNC_RUNNER_ARGS_INIT(struct gather_args)};
     struct gather_args args;
     args.states = (struct astate **) states;
@@ -375,6 +376,7 @@ struct astate *async_gather(size_t n, struct astate * const states[]) {
     return async_create_task(async_new(&gather_runner, &args));
 }
 
+
 static void vgather_destr(struct astate *st) {
     struct gather_args *arg = st->args;
     event_loop->free(arg->states);
@@ -382,7 +384,7 @@ static void vgather_destr(struct astate *st) {
 
 struct astate *async_vgather(size_t n, ...) {
     static const async_runner vgather_runner = {
-        gather_coro, vgather_destr,
+        gather_coro, vgather_destr, gather_cancel,
         ASYNC_RUNNER_ARGS_INIT(struct gather_args)};
     struct gather_args args;
     va_list va_args;
@@ -550,4 +552,44 @@ void async_run(struct astate *amain) {
     event_loop->init();
     event_loop->run_until_complete(amain);
     event_loop->close();
+}
+
+static int async_cancel_single(struct astate *state){
+    if(state->_runner->cancel) {
+        /* this cancel callback might do the right thing... or might not */
+        if(!state->_runner->cancel(state)){
+            return 0;
+        }
+    }
+
+    /* decref child's ownership of self */
+    ASYNC_DECREF(state);
+    /* default behavior, terminate and set ECANCELLED */
+    state->err = ASYNC_ECANCELLED;
+    state->_async_k = ASYNC_DONE;
+
+    return 1;
+}
+
+int async_cancel_(struct astate *state) {
+    /* these are basic requirements so you shouldn't test for these in custom cancel code */
+    /* already cancelled */
+    if(async_is_cancelled(state)) return 1;
+    /* can't cancel finished task */
+    if(async_is_done(state)) return 0;
+
+    int cancelled = async_cancel_single(state);
+    if (cancelled) {
+        while (state->_child) {
+            /* decref parent's ownership of child */
+            ASYNC_DECREF(state->_child);
+            /* it's done, or isn't only referenced by self or refuses to cancel */
+            if (async_is_done(state->_child) || state->_refcnt != 1 || !async_cancel_single(state->_child)) {
+                break;
+            }
+            /* one of the child tasks down the chain refused to cancel so we are done here */
+            state = state->_child;
+        }
+    }
+    return cancelled;
 }

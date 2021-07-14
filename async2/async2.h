@@ -26,7 +26,7 @@ SOFTWARE.
  * = Stackful Async Subroutines =
  *
  * Taking inspiration from protothreads, async.h, coroutines.h and async/await as found in python
- * this is an async/await/fawait/event loop implementation for C based on Duff's device.
+ * this is an async/await/event loop implementation for C based on Duff's device.
  *
  * Features:
  *
@@ -74,8 +74,7 @@ typedef enum {
 #define async_get_flag(obj, flag)          ((obj)->_flags &   (flag))
 
 typedef enum {
-    ASYNC_TASK_FLAG_SCHEDULED = 1u << 0,
-    ASYNC_TASK_FLAG_CANCELLED = 1u << 1
+    ASYNC_TASK_FLAG_SCHEDULED = 1u << 0
 } async_task_flags;
 
 typedef enum {
@@ -92,6 +91,8 @@ typedef struct astate *p_astate;
 typedef async (*AsyncCallback)(struct astate *);
 
 typedef void (*AsyncDestructorCallback)(struct astate *);
+
+typedef int (*AsyncCancelCallback)(struct astate *);
 
 #ifdef _MSC_VER
     /* silent MSVC's warning on unnamed type definition in parentheses because it's valid C */
@@ -141,6 +142,7 @@ typedef void (*AsyncDestructorCallback)(struct astate *);
 typedef struct {
     AsyncCallback coro;
     AsyncDestructorCallback destr;
+    AsyncCancelCallback cancel;
     struct {
         size_t stack_offset; /* offset from the base of a struct to stack */
         size_t args_size;    /* size of args without padding */
@@ -162,7 +164,7 @@ struct astate {
     unsigned int _refcnt; /* reference count number of functions still using this state. 1 by default, because coroutine owns itself too. If number of references is 0, the state becomes invalid and will be freed by the event loop soon */
     /* containers: */
     const async_runner *_runner;
-    struct astate *_child; /* child state used by fawait */
+    struct astate *_child; /* child state used by await */
     struct astate *_prev, *_next;
     void *_allocs;
     #ifdef ASYNC_DEBUG
@@ -217,7 +219,7 @@ extern const struct async_event_loop * const * const async_loop_ptr;
 
 #define ASYNC_XINCREF(coro) (void) ((coro) ? ASYNC_INCREF(coro) : (void)0)
 
-#define ASYNC_XDECREF(coro) (void) ((coro) ? ASYNC_DECREF(coro) : (void)0)
+#define ASYNC_XDECREF(coro) (void) (((coro) && (coro)->_refcnt != 0) ? ASYNC_DECREF(coro) : (void)0)
 
 /*
  * Mark the start of an async subroutine
@@ -312,12 +314,12 @@ extern const struct async_event_loop * const * const async_loop_ptr;
 /*
  * Cancels running task
  */
-#define async_cancel(task) async_set_flag(task, ASYNC_TASK_FLAG_CANCELLED)
+#define async_cancel(task) async_cancel_(task)
 
 /*
  * returns 1 if function was cancelled
  */
-#define async_is_cancelled(task) async_get_flag(task, ASYNC_TASK_FLAG_CANCELLED)
+#define async_is_cancelled(task) ((task)->err == ASYNC_ECANCELLED)
 
 /*
  * Check if async subroutine is done
@@ -356,7 +358,10 @@ extern const struct async_event_loop * const * const async_loop_ptr;
     do {                                                               \
         if ((_async_ctx_->_child = async_create_task(task)) != NULL) { \
             ASYNC_INCREF(_async_ctx_->_child);                         \
-            async_yield;                                               \
+            if(!async_is_done(_async_ctx_->_child)){                   \
+                async_yield;                                           \
+            }                                                          \
+                                                                       \
             async_errno = _async_ctx_->_child->err;                    \
             ASYNC_DECREF(_async_ctx_->_child);                         \
             _async_ctx_->_child = NULL;                                \
@@ -373,6 +378,7 @@ extern const struct async_event_loop * const * const async_loop_ptr;
 #define async_free(ptr) async_free_(_async_ctx_, ptr)
 
 #define async_free_later(ptr) async_free_later_(_async_ctx_, ptr)
+
 
 /*
  * Run few variadic tasks in parallel
@@ -412,6 +418,8 @@ void async_args_destructor(struct astate *state);
 void async_free_task_(struct astate *state);
 
 void async_free_tasks_(size_t n, struct astate * const states[]);
+
+int async_cancel_(struct astate *state);
 
 void *async_alloc_(struct astate *state, size_t size);
 
