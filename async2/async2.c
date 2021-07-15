@@ -220,15 +220,15 @@ static void async_loop_once_(void) {
 
 /* todo: run forever loop */
 static void async_loop_run_forever_(void) {
-    async_set_flag(event_loop, ASYNC_LOOP_FLAG_RUNNING);
+    async_set_flag_(event_loop, ASYNC_LOOP_FLAG_RUNNING);
 
-    async_unset_flag(event_loop, ASYNC_LOOP_FLAG_RUNNING);
+    async_unset_flag_(event_loop, ASYNC_LOOP_FLAG_RUNNING);
 }
 
 static void async_loop_run_until_complete_(struct astate *amain) {
     if (amain == NULL) { return; }
 
-    async_set_flag(event_loop, ASYNC_LOOP_FLAG_RUNNING);
+    async_set_flag_(event_loop, ASYNC_LOOP_FLAG_RUNNING);
 
     ASYNC_INCREF(amain);
     event_loop->create_task(amain);
@@ -239,7 +239,7 @@ static void async_loop_run_until_complete_(struct astate *amain) {
 
     ASYNC_DECREF(amain);
 
-    async_unset_flag(event_loop, ASYNC_LOOP_FLAG_RUNNING);
+    async_unset_flag_(event_loop, ASYNC_LOOP_FLAG_RUNNING);
     if (amain->_refcnt == 0) {
         async_loop_remove_(amain);
         ASTATE_FREE(amain);
@@ -255,12 +255,12 @@ static void async_loop_close_(void) {
 }
 
 static void async_loop_stop_(void){
-    async_unset_flag(event_loop, ASYNC_LOOP_FLAG_RUNNING);
+    async_unset_flag_(event_loop, ASYNC_LOOP_FLAG_RUNNING);
 }
 
-#define async_set_scheduled(task) (async_set_flag((task), ASYNC_TASK_FLAG_SCHEDULED))
+#define async_set_scheduled(task) (async_set_flag_((task), ASYNC_TASK_FLAG_SCHEDULED))
 
-#define async_is_scheduled(task) (async_get_flag(task, ASYNC_TASK_FLAG_SCHEDULED))
+#define async_is_scheduled(task) (async_get_flag_(task, ASYNC_TASK_FLAG_SCHEDULED))
 
 static struct astate *async_loop_create_task_(struct astate *state) {
     if (state == NULL) { return NULL; }
@@ -521,7 +521,7 @@ const struct async_event_loop *async_get_event_loop(void) {
 }
 
 void async_set_event_loop(struct async_event_loop *loop) {
-    assert(!event_loop || async_get_flag(event_loop, ASYNC_LOOP_FLAG_RUNNING));
+    assert(!event_loop || async_get_flag_(event_loop, ASYNC_LOOP_FLAG_RUNNING));
     if(loop != NULL){
         event_loop = loop;
     } else {
@@ -555,42 +555,43 @@ void async_run(struct astate *amain) {
     event_loop->close();
 }
 
-static int async_cancel_single(struct astate *state){
-    if(state->_runner->cancel) {
-        /* this cancel callback might do the right thing... or might not */
-        if(!state->_runner->cancel(state)){
-            return 0;
-        }
-    }
-
-    /* decref child's ownership of self */
-    ASYNC_DECREF(state);
-    /* default behavior, terminate and set ECANCELLED */
-    state->err = ASYNC_ECANCELLED;
-    state->_async_k = ASYNC_DONE;
-
-    return 1;
-}
+#define ASYNC_CANCEL_SINGLE(state)                                  \
+    (                                                               \
+     ASYNC_DECREF(state),  /* decref its ownership of self */       \
+     ((state)->_runner->cancel && !(state)->_runner->cancel(state)) \
+         ? (                                                        \
+            /* refused to cancel, restore refcnt */                 \
+            ASYNC_INCREF(state),                                    \
+            0                                                       \
+           )                                                        \
+         : (                                                        \
+            (state)->err = ASYNC_ECANCELLED,                        \
+            (state)->_async_k = ASYNC_DONE,                         \
+            async_set_flag_(state, ASYNC_TASK_FLAG_CANCELLED),      \
+            1                                                       \
+           )                                                        \
+    )
 
 int async_cancel_(struct astate *state) {
     /* these are basic requirements so you shouldn't test for these in custom cancel code */
     /* already cancelled */
-    if(async_is_cancelled(state)) return 1;
+    if(async_get_flag_(state, ASYNC_TASK_FLAG_CANCELLED)) return 1;
     /* can't cancel finished task */
     if(async_is_done(state)) return 0;
 
-    int cancelled = async_cancel_single(state);
-    if (cancelled) {
+    if (ASYNC_CANCEL_SINGLE(state)) {
         while (state->_child) {
             /* decref parent's ownership of child */
             ASYNC_DECREF(state->_child);
             /* it's done, or isn't only referenced by self or refuses to cancel */
-            if (async_is_done(state->_child) || state->_refcnt != 1 || !async_cancel_single(state->_child)) {
+            if (async_is_done(state->_child) || state->_refcnt != 1 || !ASYNC_CANCEL_SINGLE(state->_child)) {
                 break;
             }
             /* one of the child tasks down the chain refused to cancel so we are done here */
             state = state->_child;
         }
+        return 1;
+    } else {
+        return 0;
     }
-    return cancelled;
 }

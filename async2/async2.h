@@ -69,12 +69,13 @@ typedef enum {
     ASYNC_ECANCELLED = 42, ASYNC_EINVAL_STATE
 } async_error;
 
-#define async_set_flag(obj, flag)   (void) ((obj)->_flags |=  (flag))
-#define async_unset_flag(obj, flag) (void) ((obj)->_flags &= ~(flag))
-#define async_get_flag(obj, flag)          ((obj)->_flags &   (flag))
+#define async_set_flag_(obj, flag)   (void) ((obj)->_flags |=  (flag))
+#define async_unset_flag_(obj, flag) (void) ((obj)->_flags &= ~(flag))
+#define async_get_flag_(obj, flag)          ((obj)->_flags &   (flag))
 
 typedef enum {
-    ASYNC_TASK_FLAG_SCHEDULED = 1u << 0
+    ASYNC_TASK_FLAG_SCHEDULED = 1u << 0,
+    ASYNC_TASK_FLAG_CANCELLED = 1u << 1
 } async_task_flags;
 
 typedef enum {
@@ -312,7 +313,7 @@ extern const struct async_event_loop * const * const async_loop_ptr;
     )
 
 /*
- * Cancels running task
+ * Cancels running task and children recursively while state is their only owner
  */
 #define async_cancel(task) async_cancel_(task)
 
@@ -387,8 +388,7 @@ struct astate *async_vgather(size_t n, ...);
 
 /*
  * Does the same, but takes array and number of array elements.
- * Arr must not be freed before this task is done or cancelled.
- * arr will be modified inside the task, so pass a copy if you need original array to be unchanged.
+ * Arr must not be freed before this task is done.
  */
 struct astate *async_gather(size_t n, struct astate * const states[]);
 
